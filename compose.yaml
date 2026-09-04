@@ -1,0 +1,7 @@
+services:
+  app:
+    build: .
+    environment:
+      APP_REVISION: compose
+    ports:
+      - "8000:8000"
