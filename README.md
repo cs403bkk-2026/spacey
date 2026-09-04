@@ -35,8 +35,8 @@ Then open <http://127.0.0.1:8000/>.
 1. Create a branch and open a pull request.
 2. GitHub Actions installs dependencies and runs the tests.
 3. After review, merge the pull request to `main`.
-4. GitHub Actions builds the exact merged revision, publishes its container image, and submits
-   the Nomad job.
+4. Once the deployment environment is enabled, GitHub Actions builds the exact merged revision,
+   publishes its container image, and submits the Nomad job.
 5. Check the permanent URL and its `/health` response. `revision` must equal the merged commit.
 
 Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).

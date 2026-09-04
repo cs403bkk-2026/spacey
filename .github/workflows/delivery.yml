@@ -22,7 +22,7 @@ jobs:
       - run: pytest
 
   build-and-deploy:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
     needs: test
     runs-on: ubuntu-latest
     env:
