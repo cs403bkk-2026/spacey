@@ -2,6 +2,9 @@ import os
 
 from flask import Flask, jsonify
 
+SPACES = [
+    {"id": 1, "name": "Founders Desk", "capacity": 1},
+]
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -16,6 +19,10 @@ def create_app() -> Flask:
             status="ok",
             revision=os.getenv("APP_REVISION", "local"),
         )
+
+    @app.get("/spaces")
+    def list_spaces():
+        return jsonify(spaces=SPACES)
 
     return app
 
