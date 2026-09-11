@@ -35,3 +35,35 @@ For each day record:
 - Added `GET /spaces` to `app.py`, returning one hardcoded space.
 - Added a matching test in `tests/test_app.py`. All tests pass.
 - Everyone has the repo cloned, set up, and has reviewed at least one PR.
+
+## 2026-09-09 - Day 2
+
+### Work and ownership
+- Agreed the MVP is: a member can make a reservation.
+- Decided to hold off on the map/search/filter ideas until reservation works.
+- We all implemented and tested `POST /spaces/<id>/bookings` together.
+- PR: https://github.com/cs403bkk-2026/startup-app/pull/3
+
+### Decisions and reasoning
+- Reservation before browsing features: the core flow (book a space) matters more right now than how members find a space.
+- Payment stays mocked, same reasoning as Day 1 - prove the flow works before adding a real provider.
+- Booking a space that doesn't exist returns 404, so the API fails clearly instead of silently.
+
+### What we skipped
+- Map view, search bar, filtering by type/size/amenities - parked as ideas for after the reservation flow is solid, not dropped.
+- Real payment and real unlock still mocked
+
+### Help and tools
+- Used Claude to help design the booking endpoint and its tests. We ran the
+  tests ourselves and manually verified the 404 case before merging.
+
+### What broke or blocked us
+- Nothing new; deployment blocker from Day 1 is still open.
+
+### What changed by the end of the day
+- Added `POST /spaces/<id>/bookings` to `app.py`.
+- Added two tests: successful booking, and booking a non-existent space (404). All 4 tests pass.
+
+### Next steps
+- Action: build the mocked unlock endpoint. Owner: Gregory. Checkpoint:
+  next sync.
