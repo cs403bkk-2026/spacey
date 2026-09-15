@@ -10,13 +10,34 @@ variable "revision" {
   type = string
 }
 
-job "startup-app" {
+job "spacey" {
   datacenters = ["cs403bkk"]
   namespace   = "startup"
   type        = "service"
 
   group "web" {
     count = 1
+
+    constraint {
+      attribute = "${node.unique.name}"
+      value     = "cs403bkk-nomad-1"
+    }
+
+    update {
+      max_parallel      = 1
+      health_check      = "checks"
+      min_healthy_time  = "10s"
+      healthy_deadline  = "3m"
+      progress_deadline = "5m"
+      auto_revert       = true
+    }
+
+    restart {
+      attempts = 3
+      interval = "5m"
+      delay    = "10s"
+      mode     = "fail"
+    }
 
     network {
       port "http" {
@@ -36,22 +57,31 @@ job "startup-app" {
         APP_REVISION = var.revision
       }
 
+      template {
+        data        = <<EOH
+DATABASE_URL={{ with nomadVar "nomad/jobs/spacey" }}{{ .database_url }}{{ end }}
+EOH
+        destination = "secrets/runtime.env"
+        env         = true
+        change_mode = "restart"
+      }
+
       resources {
         cpu    = 300
         memory = 256
       }
 
       service {
-        name     = "startup-app"
+        name     = "spacey"
         port     = "http"
         provider = "nomad"
 
         tags = [
           "traefik.enable=true",
-          format("traefik.http.routers.startup-app.rule=Host(`%s`)", var.hostname),
-          "traefik.http.routers.startup-app.entrypoints=websecure",
-          "traefik.http.routers.startup-app.tls=true",
-          "traefik.http.routers.startup-app.tls.certresolver=letsencrypt",
+          format("traefik.http.routers.spacey.rule=Host(`%s`)", var.hostname),
+          "traefik.http.routers.spacey.entrypoints=websecure",
+          "traefik.http.routers.spacey.tls=true",
+          "traefik.http.routers.spacey.tls.certresolver=letsencrypt",
         ]
 
         check {
