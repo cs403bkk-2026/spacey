@@ -67,3 +67,39 @@ For each day record:
 ### Next steps
 - Action: build the mocked unlock endpoint. Owner: Gregory. Checkpoint:
   next sync.
+
+### 2026-09-15 - Day 3
+
+**People and contributions**
+- Gregory and Flurina worked through setting up the database together on Flurina's laptop, following what we agreed on in the last meeting
+
+**Progress and evidence**
+- Postgres is now running via Docker Compose (`db` service), and the app
+  connects to it through `DATABASE_URL`.
+- All 9 tests pass locally against the real Postgres container.
+- PR: https://github.com/cs403bkk-2026/startup-app/pull/5
+
+**Decisions and reasons**
+- Went with Postgres over SQLite because that's what we agreed on in the last 
+meeting, even though SQLite was working and needed zero setup (worth the extra 
+complexity since it's the real database we'll actually use later)
+- Kept the database logic simple (plain SQL, no ORM) so it's still easy for 
+the rest of the team to read when they join.
+
+**Attempts and problems**
+- Ran into a confusing "role does not exist" error that turned out to be a second, unrelated Postgres already running directly on Flurina's laptop,competing for the same port as the Docker one. Took a while to figure out since the error didn't point at that directly. Had to check what was actually listening on the port to catch it.
+- Fixed it by moving the Docker database to a different port on the host machine.
+
+**Shortcuts and unfinished work**
+- Still mocking payment and unlock.
+- Map/search/filter UI still not started.
+- Deployment blocker from Day 1 still open.
+
+**Help and tools**
+- Used Claude to debug - mainly to help spot where the code and the error 
+messages disagreed, and to explain why the Postgres port conflict was happening. We made the actual changes and ran everything ourselves before merging.
+
+**Next steps**
+- Annabel needs to make sure she has Docker installed before pulling this branch, since tests now need a running Postgres container.
+- Action: build the mocked unlock endpoint. Owner: Gregory.
+- Action: still need `DEPLOY_ENABLED` - help needed, blocked on repo admin.
