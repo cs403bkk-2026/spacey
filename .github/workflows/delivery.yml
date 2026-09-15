@@ -12,6 +12,21 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: spacey
+          POSTGRES_PASSWORD: spacey
+          POSTGRES_DB: spacey
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U spacey"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,6 +35,8 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: pytest
+        env:
+          DATABASE_URL: postgresql://spacey:spacey@localhost:5432/spacey
 
   build-and-deploy:
     if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
