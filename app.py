@@ -113,6 +113,12 @@ def create_app(
             if space is None:
                 return jsonify(error="space not found"), 404
 
+            cur.execute(
+                "SELECT id FROM bookings WHERE space_id = %s", (space_id,)
+            )
+            if cur.fetchone() is not None:
+                return jsonify(error="space is already booked"), 409
+
             body = request.get_json(silent=True) or {}
             member = body.get("member", "guest")
 
