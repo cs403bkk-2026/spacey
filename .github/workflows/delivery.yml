@@ -9,6 +9,9 @@ permissions:
   contents: read
   packages: write
 
+env:
+  IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -38,12 +41,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://spacey:spacey@localhost:5432/spacey
 
-  build-and-deploy:
-    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+  build:
+    if: github.event_name == 'push'
     needs: test
     runs-on: ubuntu-latest
-    env:
-      IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,15 +60,58 @@ jobs:
           push: true
           tags: ${{ env.IMAGE }}
 
+  deploy:
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: spacey-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: hashicorp/setup-nomad@main
 
+      - name: Confirm this is still the current main revision
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current_revision="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${current_revision}" = "${GITHUB_SHA}" ]; then
+            echo "deploy=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "deploy=false" >> "${GITHUB_OUTPUT}"
+            echo "Skipping superseded revision ${GITHUB_SHA}"
+          fi
+
       - name: Deploy the tested revision
+        if: steps.freshness.outputs.deploy == 'true'
         env:
           NOMAD_ADDR: ${{ secrets.NOMAD_ADDR }}
           NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
         run: >-
           nomad job run
+          -detach
+          -namespace=startup
           -var="image=${IMAGE}"
           -var="hostname=${{ vars.APP_HOSTNAME }}"
           -var="revision=${{ github.sha }}"
           deploy/startup-app.nomad.hcl
+
+      - name: Verify the deployed revision
+        if: steps.freshness.outputs.deploy == 'true'
+        env:
+          APP_URL: https://${{ vars.APP_HOSTNAME }}
+          EXPECTED_REVISION: ${{ github.sha }}
+        run: |
+          for attempt in {1..36}; do
+            actual_revision="$(curl --fail --silent --show-error "${APP_URL}/health" | jq --raw-output '.revision' 2>/dev/null || true)"
+            if [ "${actual_revision}" = "${EXPECTED_REVISION}" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Timed out waiting for the expected revision" >&2
+          exit 1
