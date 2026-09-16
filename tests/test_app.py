@@ -144,3 +144,19 @@ def test_unlock_unknown_booking_returns_404():
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
+
+def test_metrics_reports_spaces_bookings_and_members():
+    client = make_client()
+
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
+    client.post("/spaces/1/bookings", json={"member": "annabel"})
+    client.post("/spaces/2/bookings", json={"member": "gregory"})
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "spaces": 2,
+        "bookings": 2,
+        "members": 2,
+    }
