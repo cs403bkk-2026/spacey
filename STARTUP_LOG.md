@@ -103,3 +103,35 @@ messages disagreed, and to explain why the Postgres port conflict was happening.
 - Annabel needs to make sure she has Docker installed before pulling this branch, since tests now need a running Postgres container.
 - Action: build the mocked unlock endpoint. Owner: Gregory.
 - Action: still need `DEPLOY_ENABLED` - help needed, blocked on repo admin.
+
+### 2026-09-16 - Day 4
+
+**People and contributions**
+- Roles split for the first time: Annabel picked issue, Flurina implemented.
+- Picked issue #7 (prevent double-booking) as the first issue to close.
+
+**Progress and evidence**
+- `POST /spaces/<id>/bookings` now rejects a second booking on and already-booked space with `409 Conflict`.
+- Verified with `pytest -q` (10 passed), including a new test for the double-booking case.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/12
+- Also noticed Maksym updated the deployment workflow and Nomad job to actually run Spacey on the class infrastructure once DEPLOY_ENABLED is
+turned on - no action needed from us yet, just confirmed our app code
+didn't need to change for it.
+
+**Decisions and reasons**
+- Picked issue #7 first since it's a real bug that already existed (we checked - a space genuinely could be double-booked before this fix), and it needed no schema changes, unlike the time-range issue.
+- Used 409 Conflict as the status code, since it's the standard HTTP code for "this conflicts with existing state" rather than a plain 400.
+
+**Attempts and problems**
+- None for this issue - straightforward once we found where the check needed to go.
+
+**Shortcuts and unfinished work**
+- This only blocks a second booking outright, it doesn't yet know about time ranges (that's issue #8, separate).
+- Remaining open issues: #8 (time ranges), #9 (cancel a booking), #10 (list bookings for a space), (more are coming).
+
+**Help and tools**
+- Used Claude to help design and implement the fix. We reviewed the code, ran the tests ourselves, and manually confirmed the 409 case before merging.
+
+**Next steps**
+- Pick up issue #9 or #10 next (both simple, no schema changes needed).
+- Action: still need `DEPLOY_ENABLED` turned on now that the deployment workflow is ready on the prof's side - help needed.
