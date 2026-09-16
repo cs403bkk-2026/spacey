@@ -81,6 +81,15 @@ def test_create_booking_for_unknown_space_returns_404():
     assert response.status_code == 404
     assert response.get_json() == {"error": "space not found"}
 
+def test_booking_an_already_booked_space_is_rejected():
+    client = make_client()
+
+    client.post("/spaces/1/bookings", json={"member": "annabel"})
+    response = client.post("/spaces/1/bookings", json={"member": "gregory"})
+
+    assert response.status_code == 409
+    assert response.get_json() == {"error": "space is already booked"}
+
 def test_booked_space_shows_as_unavailable():
     client = make_client()
 
