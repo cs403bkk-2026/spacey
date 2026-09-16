@@ -68,7 +68,7 @@ For each day record:
 - Action: build the mocked unlock endpoint. Owner: Gregory. Checkpoint:
   next sync.
 
-### 2026-09-15 - Day 3
+## 2026-09-15 - Day 3
 
 **People and contributions**
 - Gregory and Flurina worked through setting up the database together on Flurina's laptop, following what we agreed on in the last meeting
@@ -104,7 +104,8 @@ messages disagreed, and to explain why the Postgres port conflict was happening.
 - Action: build the mocked unlock endpoint. Owner: Gregory.
 - Action: still need `DEPLOY_ENABLED` - help needed, blocked on repo admin.
 
-### 2026-09-16 - Day 4
+## 2026-09-16 - Day 4
+#### Part 1: Prevent double-booking (issue #7)
 
 **People and contributions**
 - Roles split for the first time: Annabel picked issue, Flurina implemented.
@@ -135,3 +136,32 @@ didn't need to change for it.
 **Next steps**
 - Pick up issue #9 or #10 next (both simple, no schema changes needed).
 - Action: still need `DEPLOY_ENABLED` turned on now that the deployment workflow is ready on the prof's side - help needed.
+
+
+#### Part 2: Mocked unlock endpoint (issue #15)
+
+**People and contributions**
+- Same day, same roles: Annabel picked issue #15 next, Flurina implemented.
+
+**Progress and evidence**
+- `POST /bookings/<id>/unlock` now returns a mocked access code for a paid booking, 404 for an unknown booking (closes #15).
+- Verified with `pytest -q` (12 passed).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/20
+
+**Decisions and reasons**
+- Picked #15 next since it completes the original core journey from issue #1 (find, book, pay, unlock) - the last mocked step still missing.
+- Kept the unlock endpoint's "paid" check even though payment is currently always mocked true, so the endpoint stays honest about what it actually verifies.
+
+**Attempts and problems**
+- None - matched the pattern of the existing endpoints closely.
+
+**Shortcuts and unfinished work**
+- Access code is just a random string, no real lock hardware/API involved.
+- Remaining open issues: #8 (time ranges), #9 (cancel a booking), #10(list bookings for a space), and several more added to the backlog today.
+
+**Help and tools**
+- Used Claude to help design and implement the endpoint. We reviewed the
+code, ran the tests ourselves, and manually confirmed the unlock response before merging.
+
+**Next steps**
+- Annabel to pick the next issue from the backlog.
