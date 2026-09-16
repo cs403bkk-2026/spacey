@@ -166,8 +166,23 @@ def create_app(
         access_code = secrets.token_hex(4)  # mocked lock integration
         return jsonify(booking_id=booking_id, access_code=access_code)
 
+    @app.get("/metrics")
+    def metrics():
+        with app.db.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM spaces")
+            total_spaces = cur.fetchone()["count"]
+
+            cur.execute("SELECT COUNT(*) AS count FROM bookings")
+            total_bookings = cur.fetchone()["count"]
+
+            cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
+            total_members = cur.fetchone()["count"]
+
+        return jsonify(
+            spaces=total_spaces,
+            bookings=total_bookings,
+            members=total_members,
+        )
 
     return app
-
-
 app = create_app()
