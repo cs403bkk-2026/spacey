@@ -114,3 +114,24 @@ def test_find_unknown_booking_returns_404():
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
+
+def test_unlock_a_paid_booking_returns_an_access_code():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel"}
+    ).get_json()
+
+    response = client.post(f"/bookings/{created['id']}/unlock")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["booking_id"] == created["id"]
+    assert len(body["access_code"]) > 0
+
+def test_unlock_unknown_booking_returns_404():
+    client = make_client()
+
+    response = client.post("/bookings/999/unlock")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "booking not found"}

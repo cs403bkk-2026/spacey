@@ -1,4 +1,5 @@
 import os
+import secrets
 
 import psycopg
 from flask import Flask, jsonify, request
@@ -141,6 +142,24 @@ def create_app(
             return jsonify(error="booking not found"), 404
 
         return jsonify(row)
+
+    @app.post("/bookings/<int:booking_id>/unlock")
+    def unlock_booking(booking_id):
+        with app.db.cursor() as cur:
+            cur.execute(
+                "SELECT id, paid FROM bookings WHERE id = %s", (booking_id,)
+            )
+            booking = cur.fetchone()
+
+        if booking is None:
+            return jsonify(error="booking not found"), 404
+
+        if not booking["paid"]:
+            return jsonify(error="booking is not paid"), 402
+
+        access_code = secrets.token_hex(4)  # mocked lock integration
+        return jsonify(booking_id=booking_id, access_code=access_code)
+
 
     return app
 
