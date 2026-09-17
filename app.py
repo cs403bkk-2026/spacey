@@ -69,6 +69,12 @@ def create_app(
 
     @app.get("/health")
     def health():
+        try:
+            with app.db.cursor() as cur:
+                cur.execute("SELECT 1")
+        except psycopg.Error:
+            return jsonify(status="error", error="database unreachable"), 503
+        
         return jsonify(
             status="ok",
             revision=os.getenv("APP_REVISION", "local"),
