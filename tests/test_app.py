@@ -34,7 +34,13 @@ def test_list_spaces_returns_the_seed_space():
     assert response.status_code == 200
     assert response.get_json() == {
         "spaces": [
-            {"id": 1, "name": "Founders Desk", "capacity": 1, "available": True}
+            {
+                "id": 1, 
+                "name": "Founders Desk",
+                "capacity": 1,
+                "price_cents": 0,
+                "available": True
+             }
         ]
     }
 
@@ -50,6 +56,7 @@ def test_create_space_adds_a_new_space():
         "id": 2,
         "name": "Meeting Room A",
         "capacity": 6,
+        "price_cents": 0,
     }
 
     listed = client.get("/spaces").get_json()["spaces"]
@@ -57,8 +64,38 @@ def test_create_space_adds_a_new_space():
         "id": 2,
         "name": "Meeting Room A",
         "capacity": 6,
+        "price_cents": 0,
         "available": True,
     } in listed
+
+def test_create_space_with_a_price_stores_it():
+    client = make_client()
+
+    response = client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+
+    assert response.status_code == 201
+    assert response.get_json() == {
+        "id": 2,
+        "name": "Meeting Room A",
+        "capacity": 6,
+        "price_cents": 1500,
+    }
+
+def test_create_space_with_negative_price_is_rejected():
+    client = make_client()
+
+    response = client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": -100},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "price_cents must be a non-negative integer"
+    }
 
 def test_create_space_without_capacity_is_rejected():
     client = make_client()
@@ -241,7 +278,23 @@ def test_metrics_reports_spaces_bookings_and_members():
         "spaces": 2,
         "bookings": 2,
         "members": 2,
+        "revenue_cents": 0,
     }
+
+def test_metrics_reports_revenue_from_paid_bookings():
+    client = make_client()
+
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)})
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["revenue_cents"] == 1500
 
 def test_health_reports_error_when_database_is_unreachable():
     app = create_app(reset_on_start=True)

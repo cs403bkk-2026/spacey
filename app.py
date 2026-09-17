@@ -24,6 +24,10 @@ def get_connection(database_url: str) -> psycopg.Connection:
             """
         )
         cur.execute(
+            "ALTER TABLE spaces ADD COLUMN IF NOT EXISTS "
+            "price_cents INTEGER NOT NULL DEFAULT 0"
+        )
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS bookings (
                 id SERIAL PRIMARY KEY,
@@ -110,7 +114,7 @@ def create_app(
     @app.get("/spaces")
     def list_spaces():
         with app.db.cursor() as cur:
-            cur.execute("SELECT id, name, capacity FROM spaces")
+            cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
             rows = cur.fetchall()
             cur.execute(
                 "SELECT DISTINCT space_id FROM bookings "
@@ -128,19 +132,24 @@ def create_app(
         body = request.get_json(silent=True) or {}
         name = body.get("name")
         capacity = body.get("capacity")
+        price_cents = body.get("price_cents", 0)
 
         if not name or not isinstance(capacity, int):
             return jsonify(error="name and capacity are required"), 400
+        if not isinstance(price_cents, int) or price_cents < 0:
+            return jsonify(
+                error="price_cents must be a non-negative integer"
+            ), 400
 
         with app.db.cursor() as cur:
             cur.execute(
-                "INSERT INTO spaces (name, capacity) VALUES (%s, %s) "
+                "INSERT INTO spaces (name, capacity, price_cents) VALUES (%s, %s, %s) "
                 "RETURNING id",
-                (name, capacity),
+                (name, capacity, price_cents),
             )
             new_id = cur.fetchone()["id"]
 
-        return jsonify(id=new_id, name=name, capacity=capacity), 201
+        return jsonify(id=new_id, name=name, capacity=capacity, price_cents=price_cents), 201
     
     @app.post("/spaces/<int:space_id>/bookings")
     def create_booking(space_id):
@@ -245,10 +254,18 @@ def create_app(
             cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
             total_members = cur.fetchone()["count"]
 
+            cur.execute(
+                "SELECT COALESCE(SUM(s.price_cents), 0) AS total "
+                "FROM bookings b JOIN spaces s ON s.id = b.space_id "
+                "WHERE b.paid"
+            )
+            revenue_cents = cur.fetchone()["total"]
+
         return jsonify(
             spaces=total_spaces,
             bookings=total_bookings,
             members=total_members,
+            revenue_cents=revenue_cents,
         )
 
     return app
