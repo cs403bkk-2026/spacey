@@ -325,3 +325,32 @@ code, ran the tests ourselves, and manually confirmed the unlock response before
 - Action: review and merge PR #37. Owner: Annabel.
 - Action: fix the issue #8 text on GitHub. Owner: Flurina.
 - Action: open an issue for the simultaneous double-booking problem. Owner: Annabel.
+
+#### Part 5: Load/capacity test (issue #33)
+
+**People and contributions**
+- Picked issue #33 specifically because it's a brand-new file (`scripts/load_test.py`, `LOAD_TEST.md`), so it couldn't conflict with the time-range work happening in `app.py` at the same time. Flurina implemented it.
+
+**Progress and evidence**
+- Added `scripts/load_test.py`, hitting GET /spaces at a configurable concurrency level and reporting latency/failure rate.
+- Ran it for real at concurrency 5 and 50 (200 requests each) against a ocal gunicorn instance with 2 workers.
+- Results documented in LOAD_TEST.md: 0 failures at both levels. Throughput held up (~1932 req/s at concurrency 5, ~2047 req/s at concurrency 50), but median latency rose about 9.6x over the same jump (2.2ms to 21.1ms).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/40
+
+**Decisions and reasons**
+- Concluded the first bottleneck is the small gunicorn worker pool (2 sync workers), not the database - throughput didn't collapse, but each request waited longer for a free worker, which shows up as rising latency rather than failures.
+- Picked GET /spaces as the endpoint to hit since it's read-only and side-effect-free, so it's safe to hammer repeatedly.
+
+**Attempts and problems**
+- First attempt on a different machine had every request fail - the server process wasn't actually reachable yet when the script started. Fixed by adding a short wait after starting the server and confirming with a manual request first.
+
+**Shortcuts and unfinished work**
+- Run on a developer laptop, not the actual deployment target - absolute numbers will differ once DEPLOY_ENABLED is on and this runs on the real infrastructure.
+- Remaining open issues: dashboard page (#32), delete a space (#19, in review), consistent error shapes, and the rest of the earlier backlog.
+
+**Help and tools**
+- Used Claude to help design and run the script. We reviewed the code, ran it ourselves against a real running instance, and the numbers in LOAD_TEST.md are the actual output, not estimated.
+
+**Next steps**
+- Once DEPLOY_ENABLED is on, re-run this against the real deployment for comparison.
+- Gregory to pick the next issue from the backlog.
