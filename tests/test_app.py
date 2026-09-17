@@ -326,3 +326,34 @@ def test_dashboard_shows_current_metrics():
     assert "Bookings: 1" in body
     assert "Members: 1" in body
     assert "$15.00" in body
+
+def test_delete_unbooked_space_removes_it():
+    client = make_client()
+    created = client.post(
+        "/spaces", json={"name": "Temp Room", "capacity": 3}
+    ).get_json()
+
+    response = client.delete(f"/spaces/{created['id']}")
+
+    assert response.status_code == 204
+    listed = client.get("/spaces").get_json()["spaces"]
+    assert all(s["id"] != created["id"] for s in listed)
+
+def test_delete_space_with_bookings_is_rejected():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)})
+
+    response = client.delete("/spaces/1")
+
+    assert response.status_code == 409
+    assert response.get_json() == {
+        "error": "space has bookings, cancel them first"
+    }
+
+def test_delete_unknown_space_returns_404():
+    client = make_client()
+
+    response = client.delete("/spaces/999")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "space not found"}
