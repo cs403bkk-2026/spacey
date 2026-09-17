@@ -124,6 +124,31 @@ def test_find_unknown_booking_returns_404():
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
 
+def test_cancel_booking_makes_space_available_again():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel"}
+    ).get_json()
+
+    response = client.delete(f"/bookings/{created['id']}")
+
+    assert response.status_code == 200
+    assert response.get_json() == created
+
+    spaces = client.get("/spaces").get_json()["spaces"]
+    founders_desk = next(s for s in spaces if s["id"] == 1)
+    assert founders_desk["available"] is True
+
+    assert client.get(f"/bookings/{created['id']}").status_code == 404
+
+def test_cancel_unknown_booking_returns_404():
+    client = make_client()
+
+    response = client.delete("/bookings/999")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "booking not found"}
+
 def test_unlock_a_paid_booking_returns_an_access_code():
     client = make_client()
     created = client.post(
@@ -159,4 +184,17 @@ def test_metrics_reports_spaces_bookings_and_members():
         "spaces": 2,
         "bookings": 2,
         "members": 2,
+    }
+
+def test_health_reports_error_when_database_is_unreachable():
+    app = create_app(reset_on_start=True)
+    app.db.close()  # simulate a lost/broken database connection
+    client = app.test_client()
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "status": "error",
+        "error": "database unreachable",
     }
