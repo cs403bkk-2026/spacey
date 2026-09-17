@@ -297,3 +297,31 @@ code, ran the tests ourselves, and manually confirmed the unlock response before
 **Next steps**
 - Annabel to pick #32 (dashboard) next, now that real revenue data exists.
 - Action: still need `DEPLOY_ENABLED` turned on - help needed.
+#### Part 4: Time range for bookings (issue #8)
+
+**People and contributions**
+- Gregory implemented #8. PR is open and waiting for Annabels review.
+
+**Progress and evidence**
+- Bookings now need a `start_time` and `end_time` (date + time with timezone). A booking is only rejected with 409 if it overlaps an existing one, and `available` in `GET /spaces` now means "not booked right now" instead of "ever booked".
+- Verified with `pytest -q` (20 passed - updated the existing booking tests to send times, plus 4 new ones), and CI is green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/37
+
+**Decisions and reasons**
+- Times must include a timezone - we're in Bangkok but the server will probably run on UTC, so "09:00" alone would be ambiguous.
+- Back-to-back bookings (10-11, then 11-12) are allowed, since they don't actually overlap.
+
+**Attempts and problems**
+- The issue text on GitHub for #8 was wrong (it had the double-booking description from #7 copied in), so we built what the title and our original backlog said. Issue text still needs fixing.
+
+**Shortcuts and unfinished work**
+- Two requests at the exact same moment could still both get through, since the overlap check and the insert are separate steps. Needs a database constraint before the load test.
+- `/unlock` doesn't check if the booking is actually happening right now.
+
+**Help and tools**
+- Used Claude to help implement the overlap check and update the tests. We ran the tests ourselves and manually tried a Bangkok-time booking against an overlapping UTC one before opening the PR.
+
+**Next steps**
+- Action: review and merge PR #37. Owner: Annabel.
+- Action: fix the issue #8 text on GitHub. Owner: Flurina.
+- Action: open an issue for the simultaneous double-booking problem. Owner: Annabel.
