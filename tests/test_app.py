@@ -216,8 +216,7 @@ def test_delete_unknown_space_returns_404():
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "space not found"}
-        "members": 2,
-    }
+
 
 def test_health_reports_error_when_database_is_unreachable():
     app = create_app(reset_on_start=True)
