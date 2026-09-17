@@ -267,3 +267,61 @@ code, ran the tests ourselves, and manually confirmed the unlock response before
 - Action: fix the README setup steps so the new team can run the tests. Owner: Gregory.
 - Action: implement delete a space (#19). Owner: Gregory.
 - Action: still need `DEPLOY_ENABLED` turned on - help needed.
+
+#### Part 3: Price and revenue tracking (issue #31)
+
+**People and contributions**
+- Flurina picked #31 next, since it unblocks the dashboard issue (#32), which needs real revenue data to show. Flurina implemented it.
+
+**Progress and evidence**
+- Spaces now have a price (`price_cents`, stored in cents to avoid floating-point rounding issues with money).
+- `GET /metrics` now reports `revenue_cents`, summed from paid bookings.
+- Verified with `pytest -q` (19 passed).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/35
+
+**Decisions and reasons**
+- Priced in cents as an integer, not a decimal/float, to avoid classic floating-point rounding bugs with money.
+- Price defaults to 0 for spaces created without one, so existing behavior (and the seeded space) doesn't break.
+- Picked this before the dashboard issue on purpose - building the dashboard first would have meant building it twice once revenue existed.
+
+**Attempts and problems**
+- None - the existing database already had the older schema without a price column, which was actually a good real test that our migration (`ADD COLUMN IF NOT EXISTS`) works on an existing database, not just a fresh one.
+
+**Shortcuts and unfinished work**
+- Revenue is a simple sum, not broken down by space or time period.
+- Remaining open issues: dashboard page (#32, now unblocked), load test (#33), plus the earlier backlog.
+
+**Help and tools**
+- Used Claude to help design the schema change and revenue calculation. We reviewed the code, ran the tests ourselves, and manually confirmed the revenue number before merging.
+
+**Next steps**
+- Annabel to pick #32 (dashboard) next, now that real revenue data exists.
+- Action: still need `DEPLOY_ENABLED` turned on - help needed.
+#### Part 4: Time range for bookings (issue #8)
+
+**People and contributions**
+- Gregory implemented #8. PR is open and waiting for Annabels review.
+
+**Progress and evidence**
+- Bookings now need a `start_time` and `end_time` (date + time with timezone). A booking is only rejected with 409 if it overlaps an existing one, and `available` in `GET /spaces` now means "not booked right now" instead of "ever booked".
+- Verified with `pytest -q` (20 passed - updated the existing booking tests to send times, plus 4 new ones), and CI is green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/37
+
+**Decisions and reasons**
+- Times must include a timezone - we're in Bangkok but the server will probably run on UTC, so "09:00" alone would be ambiguous.
+- Back-to-back bookings (10-11, then 11-12) are allowed, since they don't actually overlap.
+
+**Attempts and problems**
+- The issue text on GitHub for #8 was wrong (it had the double-booking description from #7 copied in), so we built what the title and our original backlog said. Issue text still needs fixing.
+
+**Shortcuts and unfinished work**
+- Two requests at the exact same moment could still both get through, since the overlap check and the insert are separate steps. Needs a database constraint before the load test.
+- `/unlock` doesn't check if the booking is actually happening right now.
+
+**Help and tools**
+- Used Claude to help implement the overlap check and update the tests. We ran the tests ourselves and manually tried a Bangkok-time booking against an overlapping UTC one before opening the PR.
+
+**Next steps**
+- Action: review and merge PR #37. Owner: Annabel.
+- Action: fix the issue #8 text on GitHub. Owner: Flurina.
+- Action: open an issue for the simultaneous double-booking problem. Owner: Annabel.
