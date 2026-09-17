@@ -69,6 +69,12 @@ def create_app(
 
     @app.get("/health")
     def health():
+        try:
+            with app.db.cursor() as cur:
+                cur.execute("SELECT 1")
+        except psycopg.Error:
+            return jsonify(status="error", error="database unreachable"), 503
+        
         return jsonify(
             status="ok",
             revision=os.getenv("APP_REVISION", "local"),
@@ -159,6 +165,21 @@ def create_app(
             cur.execute(
                 "SELECT id, space_id, member, paid FROM bookings "
                 "WHERE id = %s",
+                (booking_id,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            return jsonify(error="booking not found"), 404
+
+        return jsonify(row)
+
+    @app.delete("/bookings/<int:booking_id>")
+    def cancel_booking(booking_id):
+        with app.db.cursor() as cur:
+            cur.execute(
+                "DELETE FROM bookings WHERE id = %s "
+                "RETURNING id, space_id, member, paid",
                 (booking_id,),
             )
             row = cur.fetchone()
