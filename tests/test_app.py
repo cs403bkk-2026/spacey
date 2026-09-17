@@ -185,3 +185,16 @@ def test_metrics_reports_spaces_bookings_and_members():
         "bookings": 2,
         "members": 2,
     }
+
+def test_health_reports_error_when_database_is_unreachable():
+    app = create_app(reset_on_start=True)
+    app.db.close()  # simulate a lost/broken database connection
+    client = app.test_client()
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "status": "error",
+        "error": "database unreachable",
+    }
