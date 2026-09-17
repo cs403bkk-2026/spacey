@@ -268,6 +268,35 @@ code, ran the tests ourselves, and manually confirmed the unlock response before
 - Action: implement delete a space (#19). Owner: Gregory.
 - Action: still need `DEPLOY_ENABLED` turned on - help needed.
 
+#### Part 3: Price and revenue tracking (issue #31)
+
+**People and contributions**
+- Flurina picked #31 next, since it unblocks the dashboard issue (#32), which needs real revenue data to show. Flurina implemented it.
+
+**Progress and evidence**
+- Spaces now have a price (`price_cents`, stored in cents to avoid floating-point rounding issues with money).
+- `GET /metrics` now reports `revenue_cents`, summed from paid bookings.
+- Verified with `pytest -q` (19 passed).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/35
+
+**Decisions and reasons**
+- Priced in cents as an integer, not a decimal/float, to avoid classic floating-point rounding bugs with money.
+- Price defaults to 0 for spaces created without one, so existing behavior (and the seeded space) doesn't break.
+- Picked this before the dashboard issue on purpose - building the dashboard first would have meant building it twice once revenue existed.
+
+**Attempts and problems**
+- None - the existing database already had the older schema without a price column, which was actually a good real test that our migration (`ADD COLUMN IF NOT EXISTS`) works on an existing database, not just a fresh one.
+
+**Shortcuts and unfinished work**
+- Revenue is a simple sum, not broken down by space or time period.
+- Remaining open issues: dashboard page (#32, now unblocked), load test (#33), plus the earlier backlog.
+
+**Help and tools**
+- Used Claude to help design the schema change and revenue calculation. We reviewed the code, ran the tests ourselves, and manually confirmed the revenue number before merging.
+
+**Next steps**
+- Annabel to pick #32 (dashboard) next, now that real revenue data exists.
+- Action: still need `DEPLOY_ENABLED` turned on - help needed.
 #### Part 4: Time range for bookings (issue #8)
 
 **People and contributions**
