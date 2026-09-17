@@ -1,5 +1,6 @@
 import os
 import secrets
+from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, request
@@ -36,7 +37,33 @@ def get_connection(database_url: str) -> psycopg.Connection:
             )
             """
         )
+        # Added after the table already existed, so ALTER instead of editing
+        # CREATE TABLE above - existing databases get the new columns too.
+        cur.execute(
+            "ALTER TABLE bookings "
+            "ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ"
+        )
     return conn
+
+
+def parse_time(value) -> datetime | None:
+    """ISO 8601 with a timezone, e.g. 2026-09-25T09:00:00+07:00."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def booking_to_json(row: dict) -> dict:
+    return {
+        **row,
+        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
+        "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
+    }
 
 
 def reset_tables(conn: psycopg.Connection) -> None:
@@ -89,7 +116,10 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
             rows = cur.fetchall()
-            cur.execute("SELECT DISTINCT space_id FROM bookings")
+            cur.execute(
+                "SELECT DISTINCT space_id FROM bookings "
+                "WHERE start_time <= now() AND end_time > now()"
+            )
             booked_ids = {row["space_id"] for row in cur.fetchall()}
 
         spaces = [
@@ -129,32 +159,48 @@ def create_app(
             if space is None:
                 return jsonify(error="space not found"), 404
 
-            cur.execute(
-                "SELECT id FROM bookings WHERE space_id = %s", (space_id,)
-            )
-            if cur.fetchone() is not None:
-                return jsonify(error="space is already booked"), 409
-
             body = request.get_json(silent=True) or {}
             member = body.get("member", "guest")
+            start_time = parse_time(body.get("start_time"))
+            end_time = parse_time(body.get("end_time"))
+
+            if start_time is None or end_time is None:
+                return jsonify(
+                    error="start_time and end_time are required "
+                    "(ISO 8601 with timezone)"
+                ), 400
+            if end_time <= start_time:
+                return jsonify(error="end_time must be after start_time"), 400
+
+            # Overlap = starts before the other ends AND ends after the
+            # other starts. Back-to-back bookings (10-11, 11-12) are allowed.
+            cur.execute(
+                "SELECT id FROM bookings "
+                "WHERE space_id = %s AND start_time < %s AND end_time > %s",
+                (space_id, end_time, start_time),
+            )
+            if cur.fetchone() is not None:
+                return jsonify(
+                    error="space is already booked for that time"
+                ), 409
 
             cur.execute(
-                "INSERT INTO bookings (space_id, member, paid) "
-                "VALUES (%s, %s, %s) RETURNING id",
-                (space_id, member, True),  # mocked payment: always succeeds
+                "INSERT INTO bookings (space_id, member, paid, start_time, end_time) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "RETURNING id, space_id, member, paid, start_time, end_time",
+                # mocked payment: always succeeds
+                (space_id, member, True, start_time, end_time),
             )
-            new_id = cur.fetchone()["id"]
-    
-        return jsonify(
-            id=new_id, space_id=space_id, member=member, paid=True
-        ), 201
+            row = cur.fetchone()
+
+        return jsonify(booking_to_json(row)), 201
 
     @app.get("/bookings/<int:booking_id>")
     def find_booking(booking_id):
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid FROM bookings "
-                "WHERE id = %s",
+                "SELECT id, space_id, member, paid, start_time, end_time "
+                "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
             row = cur.fetchone()
@@ -162,14 +208,14 @@ def create_app(
         if row is None:
             return jsonify(error="booking not found"), 404
 
-        return jsonify(row)
+        return jsonify(booking_to_json(row))
 
     @app.delete("/bookings/<int:booking_id>")
     def cancel_booking(booking_id):
         with app.db.cursor() as cur:
             cur.execute(
                 "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid",
+                "RETURNING id, space_id, member, paid, start_time, end_time",
                 (booking_id,),
             )
             row = cur.fetchone()
@@ -177,7 +223,7 @@ def create_app(
         if row is None:
             return jsonify(error="booking not found"), 404
 
-        return jsonify(row)
+        return jsonify(booking_to_json(row))
 
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):
