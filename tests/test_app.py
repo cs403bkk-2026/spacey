@@ -288,7 +288,7 @@ def test_metrics_reports_revenue_from_paid_bookings():
         "/spaces",
         json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
     )
-    client.post("/spaces/2/bookings", json={"member": "gregory"})
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)})
 
     response = client.get("/metrics")
 
