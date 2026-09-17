@@ -233,3 +233,37 @@ code, ran the tests ourselves, and manually confirmed the unlock response before
 **Next steps**
 - Annabel to pick the next issue from the backlog.
 - Action: still need `DEPLOY_ENABLED` turned on - help needed.
+
+#### Part 2: Cancel a booking (issue #9)
+
+**People and contributions**
+- Gregory picked up #9 and implemented it. Annabel and Flurina both reviewed and approved the PR, Flurina merged it.
+
+**Progress and evidence**
+- `DELETE /bookings/<id>` now cancels a booking and returns the booking that was removed, or 404 if the booking doesn't exist (closes #9).
+- Added two tests: cancelling a booking makes the space show as available again (and the booking can't be found anymore), and cancelling an unknown booking returns 404.
+- Verified with `pytest -q` (16 passed, after merging in the health check changes from main).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/30
+
+**Decisions and reasons**
+- Went with actually deleting the row instead of marking it as cancelled, since that's what the issue asked for and it's the simplest version. Downside: a cancelled booking disappears from the `/metrics` counts completely.
+- Kept the same `{"error": "booking not found"}` 404 as `GET /bookings/<id>` and the unlock endpoint, so all booking endpoints fail the same way.
+
+**Attempts and problems**
+- The code itself was quick, but running the tests locally on Gregory's laptop wasn't. First Docker wasn't running and `psycopg` wasn't installed in the venv, then the tests still couldn't connect to the database.
+- Turned out `compose.yaml` puts Postgres on port 5433 (the fix from Day 3), but the app still defaults to 5432. Setting `DATABASE_URL` to port 5433 fixed it. The README doesn't mention this, so anyone following the README setup steps will hit the same problem.
+- The branch fell behind main while we worked on it (the health check PR got merged in the meantime), so we merged main in and re-ran the tests before merging.
+
+**Shortcuts and unfinished work**
+- No check on who is cancelling - anyone can cancel any booking, since there's no login/auth yet.
+- No refund logic, since payment is still mocked.
+- Delete a space (#19) not started yet - Gregory will pick it up later.
+- README still has the incomplete setup steps (no `docker compose up db -d`, no `DATABASE_URL`).
+
+**Help and tools**
+- Used Claude to help implement the endpoint and tests, and to debug why the tests couldn't reach the database locally (it spotted the 5432 vs 5433 port mismatch). We ran the tests ourselves and had two teammates review the PR before merging.
+
+**Next steps**
+- Action: fix the README setup steps so the new team can run the tests. Owner: Gregory.
+- Action: implement delete a space (#19). Owner: Gregory.
+- Action: still need `DEPLOY_ENABLED` turned on - help needed.
