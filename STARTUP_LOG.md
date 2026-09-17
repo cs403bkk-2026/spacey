@@ -137,7 +137,6 @@ didn't need to change for it.
 - Pick up issue #9 or #10 next (both simple, no schema changes needed).
 - Action: still need `DEPLOY_ENABLED` turned on now that the deployment workflow is ready on the prof's side - help needed.
 
-
 #### Part 2: Mocked unlock endpoint (issue #15)
 
 **People and contributions**
@@ -165,3 +164,72 @@ code, ran the tests ourselves, and manually confirmed the unlock response before
 
 **Next steps**
 - Annabel to pick the next issue from the backlog.
+
+#### Part 3: Basic business metrics (issue #21)
+
+**People and contributions**
+- Annabel as business owner prioritized #21 next, since the metrics dashboard is a required deliverable, not just backlog cleanup. Flurina implemented it.
+
+**Progress and evidence**
+- `GET /metrics` now returns total spaces, total bookings, and distinct
+  members, all counted live from the database.
+- Verified with `pytest -q` (13 passed).
+- PR: [paste feature/business-metrics PR link here]
+
+**Decisions and reasons**
+- Picked this over smaller CRUD issues because it's explicitly required
+  for the 25 Sept deliverable (business-metrics dashboard fed by real
+  data), and there's now real data worth reporting on.
+- Left "revenue" out on purpose - there's no price field on bookings yet,
+  so a revenue number would have to be invented. Needs a pricing decision
+  first, which is a business call, not a code one.
+
+**Attempts and problems**
+- None - straightforward counts against existing tables.
+
+**Shortcuts and unfinished work**
+- No revenue metric yet (see above).
+- No actual dashboard UI - this is just the data endpoint the dashboard
+  will read from later.
+- Remaining open issues: several from today's backlog (error response
+  consistency, health check DB connectivity, etc.).
+
+**Help and tools**
+- Used Claude to help design and implement the endpoint. We reviewed the
+  code, ran the tests ourselves, and manually confirmed the counts before
+  merging.
+
+**Next steps**
+- Annabel to decide on a pricing model so a real revenue metric can be
+  added.
+- Annabel to pick the next issue from the backlog.
+
+## 2026-09-17 - Day 5
+
+#### Part 1: Health check confirms DB connectivity (issue #24)
+
+**People and contributions**
+- Annabel as business owner picked #24 next. Flurina implemented it.
+
+**Progress and evidence**
+- `GET /health` now runs a real database check (`SELECT 1`) and returns
+503 if the database is unreachable, instead of only checking that Flask itself is up.
+- Verified with `pytest -q` (14 passed), including a new test that closes the database connection and confirms `/health` reports the failure correctly.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/28
+
+**Decisions and reasons**
+- Picked this issue now specifically because the prof's recent deployment changes verify a deploy by polling `/health` - a health check that doesn't actually check the database would be misleading exactly when it matters most.
+- Used 503 Service Unavailable, the standard status for "this service is temporarily unable to handle requests," rather than a generic 500.
+
+**Attempts and problems**
+- None - small, focused change.
+
+**Shortcuts and unfinished work**
+- Remaining open issues: consistent error shapes, list all bookings (not just per space), require a member name, capacity validation, input validation, update/delete a space, time ranges, cancel a booking, GET /spaces/<id>.
+
+**Help and tools**
+- Used Claude to help design and implement the check. We reviewed the code, ran the tests ourselves, and manually confirmed both the healthy and unreachable cases before merging.
+
+**Next steps**
+- Annabel to pick the next issue from the backlog.
+- Action: still need `DEPLOY_ENABLED` turned on - help needed.
