@@ -149,6 +149,21 @@ def create_app(
 
         return jsonify(row)
 
+    @app.delete("/bookings/<int:booking_id>")
+    def cancel_booking(booking_id):
+        with app.db.cursor() as cur:
+            cur.execute(
+                "DELETE FROM bookings WHERE id = %s "
+                "RETURNING id, space_id, member, paid",
+                (booking_id,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            return jsonify(error="booking not found"), 404
+
+        return jsonify(row)
+
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):
         with app.db.cursor() as cur:
