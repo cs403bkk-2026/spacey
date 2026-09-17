@@ -106,6 +106,25 @@ def create_app(
 
         return jsonify(id=new_id, name=name, capacity=capacity), 201
     
+    @app.delete("/spaces/<int:space_id>")
+    def delete_space(space_id):
+        with app.db.cursor() as cur:
+            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
+            space = cur.fetchone()
+            if space is None:
+                return jsonify(error="space not found"), 404
+
+            cur.execute(
+                "SELECT id FROM bookings WHERE space_id = %s LIMIT 1",
+                (space_id,),
+            )
+            if cur.fetchone() is not None:
+                return jsonify(error="space has bookings, cancel them first"), 409
+
+            cur.execute("DELETE FROM spaces WHERE id = %s", (space_id,))
+
+        return "", 204
+
     @app.post("/spaces/<int:space_id>/bookings")
     def create_booking(space_id):
         with app.db.cursor() as cur:
