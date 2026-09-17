@@ -389,3 +389,30 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Annabel to pick the next issue from the backlog.
+
+#### Part 7: Delete a space (issue #19)
+
+**People and contributions**
+- Annabel originally designed and implemented this in PR #39, including the endpoint and all three tests.
+- Her branch was out of date and its CI was failing, so Flurina reimplemented the same logic fresh against current main, rather than untangling the stale branch.
+
+**Progress and evidence**
+- `DELETE /spaces/<id>` now deletes an unbooked space (204), rejects deleting a space that still has bookings (409), and returns 404 for an unknown space.
+- Verified with `pytest -q` (27 passed).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/44
+- Closed #39 in favor of this PR.
+
+**Decisions and reasons**
+- Kept Annabel's exact approach: reject deletion outright if any booking exists, rather than cascading the delete - safer, and consistent with how the app already treats bookings as something that should be explicitly cancelled, not silently destroyed.
+
+**Attempts and problems**
+- Found why #39's CI was failing: that branch predates the time-range work merging into main, so its booking-creation test call was missing the now-required start_time/end_time fields. Not a mistake in the delete logic itself - just a branch that fell behind main.
+
+**Shortcuts and unfinished work**
+- Remaining open issues: consistent error shapes, list all bookings (not per space), require a member name, capacity validation, input validation, update a space, GET /spaces/<id>.
+
+**Help and tools**
+- Used Claude to help identify why the original PR's CI was failing and to port the logic forward cleanly. We reviewed the code, ran the tests ourselves, and confirmed all three cases before merging.
+
+**Next steps**
+- Annabel to pick the next issue from the backlog.
