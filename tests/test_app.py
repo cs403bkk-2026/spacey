@@ -308,3 +308,21 @@ def test_health_reports_error_when_database_is_unreachable():
         "status": "error",
         "error": "database unreachable",
     }
+
+def test_dashboard_shows_current_metrics():
+    client = make_client()
+
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)})
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Spaces: 2" in body
+    assert "Bookings: 1" in body
+    assert "Members: 1" in body
+    assert "$15.00" in body

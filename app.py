@@ -65,6 +65,29 @@ def booking_to_json(row: dict) -> dict:
         "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
     }
 
+def compute_metrics(cur) -> dict:
+    cur.execute("SELECT COUNT(*) AS count FROM spaces")
+    total_spaces = cur.fetchone()["count"]
+
+    cur.execute("SELECT COUNT(*) AS count FROM bookings")
+    total_bookings = cur.fetchone()["count"]
+
+    cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
+    total_members = cur.fetchone()["count"]
+
+    cur.execute(
+        "SELECT COALESCE(SUM(s.price_cents), 0) AS total "
+        "FROM bookings b JOIN spaces s ON s.id = b.space_id "
+        "WHERE b.paid"
+    )
+    revenue_cents = cur.fetchone()["total"]
+
+    return {
+        "spaces": total_spaces,
+        "bookings": total_bookings,
+        "members": total_members,
+        "revenue_cents": revenue_cents,
+    }
 
 def reset_tables(conn: psycopg.Connection) -> None:
     """Wipe all rows and restart ids. Only used for tests and an opt-in
@@ -245,28 +268,51 @@ def create_app(
     @app.get("/metrics")
     def metrics():
         with app.db.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS count FROM spaces")
-            total_spaces = cur.fetchone()["count"]
+            data = compute_metrics(cur)
+            #old code but didn't want to delete it yet in case we need it for debugging
+            #cur.execute("SELECT COUNT(*) AS count FROM spaces")
+            #total_spaces = cur.fetchone()["count"]
 
-            cur.execute("SELECT COUNT(*) AS count FROM bookings")
-            total_bookings = cur.fetchone()["count"]
+            #cur.execute("SELECT COUNT(*) AS count FROM bookings")
+            #total_bookings = cur.fetchone()["count"]
 
-            cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
-            total_members = cur.fetchone()["count"]
+            #cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
+            #total_members = cur.fetchone()["count"]
 
-            cur.execute(
-                "SELECT COALESCE(SUM(s.price_cents), 0) AS total "
-                "FROM bookings b JOIN spaces s ON s.id = b.space_id "
-                "WHERE b.paid"
-            )
-            revenue_cents = cur.fetchone()["total"]
+            #cur.execute(
+            #    "SELECT COALESCE(SUM(s.price_cents), 0) AS total "
+            #    "FROM bookings b JOIN spaces s ON s.id = b.space_id "
+            #    "WHERE b.paid"
+            #)
+            #revenue_cents = cur.fetchone()["total"]
 
-        return jsonify(
-            spaces=total_spaces,
-            bookings=total_bookings,
-            members=total_members,
-            revenue_cents=revenue_cents,
+        return jsonify(**data
+            #spaces=total_spaces,
+            #bookings=total_bookings,
+            #members=total_members,
+            #revenue_cents=revenue_cents,
         )
 
+    @app.get("/dashboard")
+    def dashboard():
+        with app.db.cursor() as cur:
+            data = compute_metrics(cur)
+
+        revenue_display = f"${data['revenue_cents'] / 100:.2f}"
+        return f"""
+        <html>
+          <head><title>Spacey - Business Metrics</title></head>
+          <body>
+            <h1>Spacey - Business Metrics</h1>
+            <ul>
+              <li>Spaces: {data['spaces']}</li>
+              <li>Bookings: {data['bookings']}</li>
+              <li>Members: {data['members']}</li>
+              <li>Revenue: {revenue_display}</li>
+            </ul>
+          </body>
+        </html>
+        """
+    
     return app
 app = create_app()
