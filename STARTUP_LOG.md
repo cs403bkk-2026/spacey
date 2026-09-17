@@ -354,3 +354,38 @@ code, ran the tests ourselves, and manually confirmed the unlock response before
 **Next steps**
 - Once DEPLOY_ENABLED is on, re-run this against the real deployment for comparison.
 - Gregory to pick the next issue from the backlog.
+
+#### Part 6: Basic metrics dashboard (issue #32)
+
+**People and contributions**
+- Annabel as business owner picked #32 next, now that real revenue data
+  exists (#31) to actually show. Flurina implemented it.
+
+**Progress and evidence**
+- Added `GET /dashboard`, a plain HTML page showing spaces, bookings,
+members, and revenue - the first thing a person can actually look at,
+not just JSON.
+- Refactored the metrics query into a shared `compute_metrics` helper so
+`/metrics` (JSON) and `/dashboard` (HTML) don't duplicate the SQL.
+- Verified with `pytest -q` (24 passed) and manually by visiting
+`/dashboard` in a browser.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/42
+
+**Decisions and reasons**
+- Kept it to plain HTML, no framework or styling - matches the brief's
+"no premature abstraction" guidance, and it's easy for the team to read and extend later.
+- Refactored the shared metrics logic out on purpose, rather than
+copy-pasting the same four queries into a second route.
+
+**Attempts and problems**
+- None - small, focused change.
+
+**Shortcuts and unfinished work**
+- No styling, no charts, just numbers in a list.
+- Remaining open issues: consistent error shapes, list all bookings (not per space), require a member name, capacity validation, input validation, update a space, GET /spaces/<id>, delete a space (#19, in review).
+
+**Help and tools**
+- Used Claude to help design and implement the endpoint and the refactor. We reviewed the code, ran the tests ourselves, and manually visited the dashboard before merging.
+
+**Next steps**
+- Annabel to pick the next issue from the backlog.
