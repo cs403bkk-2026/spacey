@@ -554,7 +554,7 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Gregory or Annabel to pick the next issue from the backlog.
-#### Part 5: Validate booking doesn't exceed space capacity (issue #16)
+#### Part 6: Validate booking doesn't exceed space capacity (issue #16)
 
 **People and contributions**
 - Gregory and Annabel implemented #16. Annabel reviewed and approved the PR first, and she also merged Flurina's #59 around the same time. Flurina then approved and merged ours.
@@ -580,3 +580,30 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: decide if we want to store `party_size` (e.g. for a "people booked" metric). Owner: Annabel.
 - Action: `testpaths` fix and flaky concurrency test are still open from Part 3.
+
+#### Part 7: Reject invalid space creation input (issue #17)
+
+**People and contributions**
+- Gregory and Annabel implemented #17. Flurina reviewed, approved and merged it.
+
+**Progress and evidence**
+- `POST /spaces` now rejects an empty or whitespace-only name, and a capacity that isn't a whole number of at least 1 (0, -5, `"6"`, 2.5, `true`), both with 400 and a clear message. Spaces around the name get trimmed before saving.
+- 3 new tests, 41 passed (ran it 5 times), CI green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/67
+
+**Decisions and reasons**
+- Kept the old "name and capacity are required" message for missing fields, so the existing test and anyone relying on it still work - new messages only for values that are there but make no sense.
+- Used the same wording as the `party_size` check from Part 5 ("whole number of at least 1"), so the errors read the same across the API.
+
+**Attempts and problems**
+- None in the code. Only hiccup: the log branch was created before the PR got merged, so it was one merge behind main - pulled main before writing this.
+
+**Shortcuts and unfinished work**
+- `price_cents: true` still gets accepted (saved as 1) - same bool-counts-as-a-number issue, just in a different field. Not fixed here to keep the PR on #17.
+- Two entries in this log are both called "Part 5" (dead /metrics code and capacity validation) - left as is, since we don't rewrite earlier entries.
+
+**Help and tools**
+- Used Claude Code for the validation and tests. Gregory reviewed the diff and ran the tests, Flurina reviewed the PR.
+
+**Next steps**
+- Action: small follow-up issue for the `price_cents: true` case. Owner: whoever is business owner next.
