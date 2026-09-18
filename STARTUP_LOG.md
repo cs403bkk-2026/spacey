@@ -473,3 +473,31 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Get teammates to review and merge PRs #51, #52, #53.
 - Gregory or Annabel to pick the next issue from the backlog.
+
+#### Part 3: List all bookings for a space (issue #10)
+
+**People and contributions**
+- Gregory and Annabel picked up #10 and implemented it. Flurina reviewed, approved and merged the PR.
+
+**Progress and evidence**
+- `GET /spaces/<id>/bookings` now returns all bookings for a space, earliest first, and 404 for an unknown space. A space with no bookings returns an empty list.
+- Verified with `pytest -q tests` (33 passed, 30 existing + 3 new), ran it 6 times in a row. CI green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/54
+
+**Decisions and reasons**
+- Returned `{"bookings": [...]}`, same shape as `GET /spaces` returning `{"spaces": [...]}`, and reused the same booking format as `GET /bookings/<id>` so everything looks the same.
+
+**Attempts and problems**
+- Plain `pytest` broke before running any test: it also picks up `scripts/load_test.py` (the name matches pytest's `*_test.py` pattern), which needs `requests`, and that wasn't installed in Gregory's venv yet. Ran `pytest tests` instead.
+- The concurrency test from Part 1 failed once in a full run. Checked it on main without our change - it failed there too (1 of 6 runs), so it's flaky and not caused by this PR. Couldn't reproduce it again to see the actual error.
+
+**Shortcuts and unfinished work**
+- No filtering (e.g. only upcoming bookings) - just returns everything for that space.
+- Flaky concurrency test not fixed yet.
+
+**Help and tools**
+- Used Claude Code to implement the endpoint and tests, and to check whether the failing concurrency test was our fault by running the suite with and without our change. Gregory reviewed the diff and a teammate reviewed the PR before merging.
+
+**Next steps**
+- Action: add `testpaths = tests` to `pytest.ini` so pytest stops picking up the load test script. Owner: Gregory and Annabel.
+- Action: open an issue for the flaky concurrency test. Owner: Flurina (wrote the test in #51).
