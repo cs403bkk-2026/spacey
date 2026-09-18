@@ -81,6 +81,19 @@ def parse_time(value) -> datetime | None:
     return parsed
 
 
+def is_valid_name(name) -> bool:
+    return isinstance(name, str) and name.strip() != ""
+
+
+def is_valid_capacity(capacity) -> bool:
+    # bool is a subclass of int in Python, so rule out true/false
+    return (
+        isinstance(capacity, int)
+        and not isinstance(capacity, bool)
+        and capacity >= 1
+    )
+
+
 def booking_to_json(row: dict) -> dict:
     return {
         **row,
@@ -182,14 +195,9 @@ def create_app(
 
         if name is None or capacity is None:
             return jsonify(error="name and capacity are required"), 400
-        if not isinstance(name, str) or not name.strip():
+        if not is_valid_name(name):
             return jsonify(error="name must not be empty"), 400
-        # bool is a subclass of int in Python, so rule out true/false
-        if (
-            not isinstance(capacity, int)
-            or isinstance(capacity, bool)
-            or capacity < 1
-        ):
+        if not is_valid_capacity(capacity):
             return jsonify(
                 error="capacity must be a whole number of at least 1"
             ), 400
@@ -228,6 +236,41 @@ def create_app(
             booked = cur.fetchone() is not None
 
         return jsonify({**space, "available": not booked})
+
+    @app.patch("/spaces/<int:space_id>")
+    def update_space(space_id):
+        body = request.get_json(silent=True) or {}
+        if "name" not in body and "capacity" not in body:
+            return jsonify(error="provide name and/or capacity to update"), 400
+
+        with app.db.cursor() as cur:
+            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="space not found"), 404
+
+            name = body.get("name")
+            capacity = body.get("capacity")
+            if "name" in body and not is_valid_name(name):
+                return jsonify(error="name must not be empty"), 400
+            if "capacity" in body and not is_valid_capacity(capacity):
+                return jsonify(
+                    error="capacity must be a whole number of at least 1"
+                ), 400
+            if name is not None:
+                name = name.strip()
+
+            # COALESCE keeps the current value for fields not in the request
+            cur.execute(
+                "UPDATE spaces "
+                "SET name = COALESCE(%s, name), "
+                "capacity = COALESCE(%s, capacity) "
+                "WHERE id = %s "
+                "RETURNING id, name, capacity, price_cents",
+                (name, capacity, space_id),
+            )
+            space = cur.fetchone()
+
+        return jsonify(space)
 
     @app.delete("/spaces/<int:space_id>")
     def delete_space(space_id):
