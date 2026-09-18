@@ -570,3 +570,65 @@ def test_list_bookings_when_there_are_none_is_empty():
 
     assert response.status_code == 200
     assert response.get_json() == {"bookings": []}
+
+def test_update_space_name_shows_up_in_list():
+    client = make_client()
+
+    response = client.patch("/spaces/1", json={"name": "Founders Desk (Window)"})
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "id": 1,
+        "name": "Founders Desk (Window)",
+        "capacity": 1,
+        "price_cents": 0,
+    }
+    spaces = client.get("/spaces").get_json()["spaces"]
+    assert spaces[0]["name"] == "Founders Desk (Window)"
+    assert spaces[0]["capacity"] == 1  # untouched
+
+def test_update_space_capacity_only_keeps_the_name():
+    client = make_client()
+
+    response = client.patch("/spaces/1", json={"capacity": 4})
+
+    assert response.status_code == 200
+    assert response.get_json()["name"] == "Founders Desk"
+    assert response.get_json()["capacity"] == 4
+
+def test_update_space_keeps_its_bookings():
+    client = make_client()
+    booking = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    client.patch("/spaces/1", json={"name": "Renamed Desk"})
+
+    assert client.get("/spaces/1/bookings").get_json() == {"bookings": [booking]}
+
+def test_update_unknown_space_returns_404():
+    client = make_client()
+
+    response = client.patch("/spaces/999", json={"name": "Ghost Room"})
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "space not found"}
+
+def test_update_space_with_invalid_values_is_rejected():
+    client = make_client()
+
+    cases = [
+        ({}, "provide name and/or capacity to update"),
+        ({"name": "   "}, "name must not be empty"),
+        ({"name": None}, "name must not be empty"),
+        ({"capacity": 0}, "capacity must be a whole number of at least 1"),
+        ({"capacity": "4"}, "capacity must be a whole number of at least 1"),
+    ]
+    for body, error in cases:
+        response = client.patch("/spaces/1", json=body)
+
+        assert response.status_code == 400
+        assert response.get_json() == {"error": error}
+
+    # nothing changed
+    assert client.get("/spaces/1").get_json()["name"] == "Founders Desk"
