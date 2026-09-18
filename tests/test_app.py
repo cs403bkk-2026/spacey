@@ -15,6 +15,37 @@ def slot(start_hours, end_hours):
         "end_time": (NOW + timedelta(hours=end_hours)).isoformat(),
     }
 
+def test_homepage_lists_spaces_with_availability():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(-1, 1)})
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Founders Desk" in body
+    assert "available" in body
+    assert "Meeting Room A" in body
+    assert "$15.00" in body
+    assert "booked" in body
+
+def test_homepage_escapes_space_names():
+    client = make_client()
+    client.post(
+        "/spaces", json={"name": "<script>alert(1)</script>", "capacity": 1}
+    )
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
+
 def test_health_reports_running_revision(monkeypatch):
     monkeypatch.setenv("APP_REVISION", "test-revision")
     client = make_client()
