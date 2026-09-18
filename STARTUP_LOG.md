@@ -529,3 +529,28 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Get a teammate to review and merge PR #59.
 - Someone to pick up the flaky concurrency test and `testpaths` fix flagged in Part 3.
+
+#### Part 5: Remove dead code in /metrics (issue #57)
+
+**People and contributions**
+- Flurina picked up issue #57 (quick cleanup).
+
+**Progress and evidence**
+- Removed the ~20 lines of commented-out pre-refactor code in `metrics()`. Behavior unchanged.
+- Verified with `pytest -q` (38 passed, unchanged).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/62
+
+**Decisions and reasons**
+- No design decisions - straight deletion, git history keeps the old code if ever needed.
+
+**Attempts and problems**
+- None.
+
+**Shortcuts and unfinished work**
+- None for this one.
+
+**Help and tools**
+- None.
+
+**Next steps**
+- Gregory or Annabel to pick the next issue from the backlog.
