@@ -385,29 +385,8 @@ def create_app(
     def metrics():
         with app.db.cursor() as cur:
             data = compute_metrics(cur)
-            #old code but didn't want to delete it yet in case we need it for debugging
-            #cur.execute("SELECT COUNT(*) AS count FROM spaces")
-            #total_spaces = cur.fetchone()["count"]
 
-            #cur.execute("SELECT COUNT(*) AS count FROM bookings")
-            #total_bookings = cur.fetchone()["count"]
-
-            #cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
-            #total_members = cur.fetchone()["count"]
-
-            #cur.execute(
-            #    "SELECT COALESCE(SUM(s.price_cents), 0) AS total "
-            #    "FROM bookings b JOIN spaces s ON s.id = b.space_id "
-            #    "WHERE b.paid"
-            #)
-            #revenue_cents = cur.fetchone()["total"]
-
-        return jsonify(**data
-            #spaces=total_spaces,
-            #bookings=total_bookings,
-            #members=total_members,
-            #revenue_cents=revenue_cents,
-        )
+        return jsonify(**data)
 
     @app.get("/dashboard")
     def dashboard():
