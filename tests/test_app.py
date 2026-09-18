@@ -386,3 +386,25 @@ def test_delete_unknown_space_returns_404():
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "space not found"}
+
+def test_get_space_returns_its_data():
+    client = make_client()
+
+    response = client.get("/spaces/1")
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "id": 1,
+        "name": "Founders Desk",
+        "capacity": 1,
+        "price_cents": 0,
+        "available": True,
+    }
+
+def test_get_unknown_space_returns_404():
+    client = make_client()
+
+    response = client.get("/spaces/999")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "space not found"}
