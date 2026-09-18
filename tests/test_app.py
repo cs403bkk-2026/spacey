@@ -106,6 +106,41 @@ def test_create_space_without_capacity_is_rejected():
     assert response.status_code == 400
     assert response.get_json() == {"error": "name and capacity are required"}
 
+def test_create_space_with_empty_name_is_rejected():
+    client = make_client()
+
+    for name in ["", "   ", 42]:
+        response = client.post("/spaces", json={"name": name, "capacity": 6})
+
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "name must not be empty"}
+
+def test_create_space_with_invalid_capacity_is_rejected():
+    client = make_client()
+
+    for capacity in [0, -5, "6", 2.5, True]:
+        response = client.post(
+            "/spaces", json={"name": "Meeting Room A", "capacity": capacity}
+        )
+
+        assert response.status_code == 400
+        assert response.get_json() == {
+            "error": "capacity must be a whole number of at least 1"
+        }
+
+    # nothing got created - only the seed space is there
+    assert len(client.get("/spaces").get_json()["spaces"]) == 1
+
+def test_create_space_trims_spaces_around_the_name():
+    client = make_client()
+
+    response = client.post(
+        "/spaces", json={"name": "  Meeting Room A  ", "capacity": 6}
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["name"] == "Meeting Room A"
+
 def test_create_booking_for_existing_space_succeeds():
     client = make_client()
 
