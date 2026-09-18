@@ -180,8 +180,20 @@ def create_app(
         capacity = body.get("capacity")
         price_cents = body.get("price_cents", 0)
 
-        if not name or not isinstance(capacity, int):
+        if name is None or capacity is None:
             return jsonify(error="name and capacity are required"), 400
+        if not isinstance(name, str) or not name.strip():
+            return jsonify(error="name must not be empty"), 400
+        # bool is a subclass of int in Python, so rule out true/false
+        if (
+            not isinstance(capacity, int)
+            or isinstance(capacity, bool)
+            or capacity < 1
+        ):
+            return jsonify(
+                error="capacity must be a whole number of at least 1"
+            ), 400
+        name = name.strip()
         if not isinstance(price_cents, int) or price_cents < 0:
             return jsonify(
                 error="price_cents must be a non-negative integer"
