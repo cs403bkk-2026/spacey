@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, request
+from psycopg.errors import ExclusionViolation
 from psycopg.rows import dict_row
 
 DATABASE_URL = os.getenv(
@@ -43,6 +44,28 @@ def get_connection(database_url: str) -> psycopg.Connection:
             "ALTER TABLE bookings "
             "ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ, "
             "ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ"
+        )
+        # Belt-and-suspenders against double-booking: the app already checks
+        # for overlaps before inserting, but that check-then-insert isn't
+        # atomic, so two simultaneous requests could both pass the check.
+        # This constraint makes Postgres itself reject the second insert.
+        cur.execute("CREATE EXTENSION IF NOT EXISTS btree_gist")
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'no_overlapping_bookings'
+                ) THEN
+                    ALTER TABLE bookings
+                    ADD CONSTRAINT no_overlapping_bookings
+                    EXCLUDE USING gist (
+                        space_id WITH =,
+                        tstzrange(start_time, end_time) WITH &&
+                    );
+                END IF;
+            END $$;
+            """
         )
     return conn
 
@@ -248,13 +271,21 @@ def create_app(
                     error="space is already booked for that time"
                 ), 409
 
-            cur.execute(
-                "INSERT INTO bookings (space_id, member, paid, start_time, end_time) "
-                "VALUES (%s, %s, %s, %s, %s) "
-                "RETURNING id, space_id, member, paid, start_time, end_time",
-                # mocked payment: always succeeds
-                (space_id, member, True, start_time, end_time),
-            )
+            try:
+                cur.execute(
+                    "INSERT INTO bookings "
+                    "(space_id, member, paid, start_time, end_time) "
+                    "VALUES (%s, %s, %s, %s, %s) "
+                    "RETURNING id, space_id, member, paid, start_time, end_time",
+                    # mocked payment: always succeeds
+                    (space_id, member, True, start_time, end_time),
+                )
+            except ExclusionViolation:
+                # The pre-check above already caught this in the common
+                # case; this only fires when two requests raced past it.
+                return jsonify(
+                    error="space is already booked for that time"
+                ), 409
             row = cur.fetchone()
 
         return jsonify(booking_to_json(row)), 201

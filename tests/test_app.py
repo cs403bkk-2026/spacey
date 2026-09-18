@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta, timezone
 
 from app import create_app
@@ -162,6 +163,34 @@ def test_overlapping_booking_is_rejected():
 
     assert response.status_code == 409
     assert response.get_json() == {"error": "space is already booked for that time"}
+
+def test_concurrent_bookings_for_the_same_slot_only_one_succeeds():
+    # Two separate app instances = two separate real DB connections, like
+    # two simultaneous requests would get in production. This is what
+    # actually exercises the race (see issue #50) rather than just the
+    # single-connection check-then-insert code path.
+    client_a = make_client()
+    client_b = create_app(reset_on_start=False).test_client()
+
+    booking = {"member": "racer", **slot(1, 2)}
+    results = [None, None]
+    start_barrier = threading.Barrier(2)
+
+    def book(client, index):
+        start_barrier.wait()
+        results[index] = client.post("/spaces/1/bookings", json=booking)
+
+    threads = [
+        threading.Thread(target=book, args=(client_a, 0)),
+        threading.Thread(target=book, args=(client_b, 1)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    statuses = sorted(r.status_code for r in results)
+    assert statuses == [201, 409]
 
 def test_back_to_back_bookings_are_allowed():
     client = make_client()
