@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, request
+from markupsafe import escape
 from psycopg.errors import ExclusionViolation
 from psycopg.rows import dict_row
 
@@ -142,7 +143,34 @@ def create_app(
 
     @app.get("/")
     def index():
-        return "<h1>Spacey</h1><p>The founding team is building here.</p>"
+        with app.db.cursor() as cur:
+            cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
+            rows = cur.fetchall()
+            cur.execute(
+                "SELECT DISTINCT space_id FROM bookings "
+                "WHERE start_time <= now() AND end_time > now()"
+            )
+            booked_ids = {row["space_id"] for row in cur.fetchall()}
+
+        items = "".join(
+            f"""
+            <li>
+              {escape(row['name'])} - capacity {row['capacity']},
+              ${row['price_cents'] / 100:.2f}
+              - {"booked" if row['id'] in booked_ids else "available"}
+            </li>
+            """
+            for row in rows
+        )
+        return f"""
+        <html>
+          <head><title>Spacey - Spaces</title></head>
+          <body>
+            <h1>Spacey</h1>
+            <ul>{items}</ul>
+          </body>
+        </html>
+        """
 
     @app.get("/health")
     def health():
