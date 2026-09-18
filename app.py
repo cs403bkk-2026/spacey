@@ -237,7 +237,23 @@ def create_app(
             cur.execute("DELETE FROM spaces WHERE id = %s", (space_id,))
 
         return "", 204
-    
+
+    @app.get("/spaces/<int:space_id>/bookings")
+    def list_space_bookings(space_id):
+        with app.db.cursor() as cur:
+            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="space not found"), 404
+
+            cur.execute(
+                "SELECT id, space_id, member, paid, start_time, end_time "
+                "FROM bookings WHERE space_id = %s ORDER BY start_time",
+                (space_id,),
+            )
+            rows = cur.fetchall()
+
+        return jsonify(bookings=[booking_to_json(row) for row in rows])
+
     @app.post("/spaces/<int:space_id>/bookings")
     def create_booking(space_id):
         with app.db.cursor() as cur:
