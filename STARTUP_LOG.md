@@ -501,3 +501,31 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: add `testpaths = tests` to `pytest.ini` so pytest stops picking up the load test script. Owner: Gregory and Annabel.
 - Action: open an issue for the flaky concurrency test. Owner: Flurina (wrote the test in #51).
+
+#### Part 4: List all bookings across every space (issue #23)
+
+**People and contributions**
+- Flurina picked up issue #23 and implemented it.
+
+**Progress and evidence**
+- `GET /bookings` now returns all bookings across every space, earliest first.
+- Verified with `pytest -q` (35 passed: 33 existing + 2 new).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/59
+
+**Decisions and reasons**
+- Picked #23 next since it complements #10 (per-space listing, just merged) and is explicitly wanted by the dashboard/load-test work - small, no schema changes.
+- Reused the same `{"bookings": [...]}` shape and formatting as the per-space endpoint, so the two stay consistent.
+
+**Attempts and problems**
+- None - small addition, same query pattern as the per-space listing endpoint from Part 3.
+
+**Shortcuts and unfinished work**
+- No filtering (e.g. by space, by date range) - just returns everything.
+- Still open: consistent error shapes, require a member name, capacity validation, reject invalid space input, update a space, ownership checks, env var docs, README update, homepage space list, availability for a specific time slot (#56), dead code in /metrics (#57), and the flaky concurrency test / missing `testpaths` config flagged in Part 3.
+
+**Help and tools**
+- Used Claude Code again: it proposed the change first, I reviewed and applied it myself, and ran the tests myself before pushing.
+
+**Next steps**
+- Get a teammate to review and merge PR #59.
+- Someone to pick up the flaky concurrency test and `testpaths` fix flagged in Part 3.
