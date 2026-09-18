@@ -416,3 +416,34 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Annabel to pick the next issue from the backlog.
+
+## 2026-09-18 - Day 6
+
+#### Part 1: Fix booking race condition (issue #50)
+
+**People and contributions**
+- Flurina picked up issue #50 (business owner call: a booking system that can double-book under load is a correctness bug in the core feature, not a nice-to-have, and it directly follows up on the load test work from #33).
+
+**Progress and evidence**
+- Added a Postgres exclusion constraint on `bookings` (`space_id` + `tstzrange(start_time, end_time)`) so the database itself rejects a second overlapping booking, even if two requests race past the existing application-level check. The insert is wrapped in a try/except so a constraint violation still returns the normal `409 space is already booked for that time` instead of a 500.
+- New test creates two separate app instances (two real DB connections, like two real simultaneous requests would get), fires both bookings for the same slot at the same instant using a `threading.Barrier`, and asserts exactly one `201` and one `409` come back. Ran it 5x standalone - passed every time.
+- `pytest -q`: 28 passed (27 existing + 1 new).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/51
+
+**Decisions and reasons**
+- Chose the DB-constraint fix over the other option in #50 (wrapping the check in a transaction with `SELECT ... FOR UPDATE`). Our app currently keeps one long-lived connection per app instance rather than a connection pool, which makes an app-level lock unreliable across requests; a constraint is enforced by Postgres per statement regardless of how the app manages connections, so it's the simpler and more "boring" fix given our no-ORM setup.
+- Kept the original pre-insert overlap check in place as the fast, friendly path (it fires first in the non-racing case); the constraint is a backstop for when it's raced.
+
+**Attempts and problems**
+- First attempt at the constraint used `tsrange(start_time, end_time)`, which failed at startup with `UndefinedFunction: tsrange(timestamp with time zone, ...)` - our columns are `TIMESTAMPTZ`, so the range function needs to be `tstzrange`, not `tsrange`. Caught immediately by actually running the test suite rather than assuming the SQL was right.
+
+**Shortcuts and unfinished work**
+- Not exercised under real multi-process load (e.g. gunicorn with multiple workers) yet, only two app instances in a test - worth confirming again once we deploy with more than one worker.
+- Remaining open issues: consistent error shapes, list all bookings (not per space), require a member name, capacity validation, input validation, update a space, GET /spaces/<id>, ownership checks on cancel/unlock, env var docs, README update, homepage space list.
+
+**Help and tools**
+- This session used Claude Code (the terminal-based CLI) for the first time, instead of the chat interface we'd used before - it has direct terminal access, so it read the open GitHub issues itself, picked #50, wrote the fix and test, and ran `pytest` itself rather than us copy-pasting commands. We still reviewed every line of the diff and the PR description before pushing, and independently re-ran the concurrency test 5 times to check it wasn't just getting lucky before trusting the result.
+
+**Next steps**
+- Get a teammate to review and merge PR #51.
+- Gregory or Annabel to pick the next issue from the backlog.
