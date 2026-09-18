@@ -306,6 +306,17 @@ def create_app(
 
         return jsonify(booking_to_json(row)), 201
 
+    @app.get("/bookings")
+    def list_bookings():
+        with app.db.cursor() as cur:
+            cur.execute(
+                "SELECT id, space_id, member, paid, start_time, end_time "
+                "FROM bookings ORDER BY start_time"
+            )
+            rows = cur.fetchall()
+
+        return jsonify(bookings=[booking_to_json(row) for row in rows])
+
     @app.get("/bookings/<int:booking_id>")
     def find_booking(booking_id):
         with app.db.cursor() as cur:
