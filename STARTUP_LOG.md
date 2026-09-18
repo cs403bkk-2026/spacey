@@ -554,3 +554,29 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Gregory or Annabel to pick the next issue from the backlog.
+#### Part 5: Validate booking doesn't exceed space capacity (issue #16)
+
+**People and contributions**
+- Gregory and Annabel implemented #16. Annabel reviewed and approved the PR first, and she also merged Flurina's #59 around the same time. Flurina then approved and merged ours.
+
+**Progress and evidence**
+- Bookings now take an optional `party_size` (default 1). If it's bigger than the space's capacity, the booking is rejected with 400 and a message saying why, e.g. `party_size 2 exceeds this space's capacity of 1`.
+- 3 new tests (too many people, exactly at capacity, invalid values like `0` or `"two"`). 36 passed locally, 38 on main after #59 came in, CI green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/60
+
+**Decisions and reasons**
+- Made `party_size` optional so the load test script and existing tests didn't need to change.
+- Used 400 instead of 409 - the request itself is wrong, it's not a clash with another booking.
+
+**Attempts and problems**
+- Annabel's approval got dismissed automatically: #59 merged first, we merged main into our branch, and GitHub treats a new commit as needing a fresh review. Flurina re-approved it after the update.
+
+**Shortcuts and unfinished work**
+- `party_size` is only checked, not saved, so it doesn't show up in bookings or metrics yet.
+
+**Help and tools**
+- Used Claude Code to implement the check and tests. Gregory ran the tests himself and reviewed the diff, and Annabel and Flurina reviewed the PR.
+
+**Next steps**
+- Action: decide if we want to store `party_size` (e.g. for a "people booked" metric). Owner: Annabel.
+- Action: `testpaths` fix and flaky concurrency test are still open from Part 3.
