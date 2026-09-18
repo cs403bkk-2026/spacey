@@ -635,3 +635,30 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: merge main into `update_space`, re-run tests, merge PR #70. Owner: Annabel and Gregory.
 - Action: open an issue + fix for the deadlock (also catch `DeadlockDetected`, return 409). Owner: Flurina and Gregory.
+
+#### Part 9: Replace the homepage with a real space list (issue #49)
+
+**People and contributions**
+- Annabel the business owner picked issue #49 and Flurina implemented it.
+
+**Progress and evidence**
+- `GET /` now renders a plain HTML list of spaces (name, capacity, price, available/booked), reading the same data `GET /spaces` already returns - no JS framework, no styling, matching how `/dashboard` was done.
+- Verified with `pytest -q` (43 passed: 41 existing + 2 new).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/69
+
+**Decisions and reasons**
+- Picked #49 next since #65 (booking form) and #66 (confirmation page) both explicitly depend on a real homepage existing first.
+- Escaped the space `name` with `markupsafe.escape()` before rendering it into the page, since it's user input (from `POST /spaces`) - without that, a space named e.g. `<script>...</script>` would be a stored XSS hole. Added a test that specifically checks a script-tag name gets escaped, not executed.
+
+**Attempts and problems**
+- None - straightforward once the escaping question was settled.
+
+**Shortcuts and unfinished work**
+- No styling, no booking form yet - just a list (#65, #66 next).
+- Remaining open issues: booking form (#65), confirmation/unlock page (#66), availability for a specific time slot (#56), ownership checks (#48), env var docs (#47), README update (#46), consistent error shapes (#25), require a member name (#22).
+
+**Help and tools**
+- Used Claude Code again: it proposed the change (including flagging the XSS risk itself), I reviewed and applied it, and ran the tests myself before pushing.
+
+**Next steps**
+- Whoever's free next: pick up #65 (booking form), now that #49 unblocks it.
