@@ -174,6 +174,26 @@ def create_app(
 
         return jsonify(id=new_id, name=name, capacity=capacity, price_cents=price_cents), 201
 
+    @app.get("/spaces/<int:space_id>")
+    def get_space(space_id):
+        with app.db.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, capacity, price_cents FROM spaces WHERE id = %s",
+                (space_id,),
+            )
+            space = cur.fetchone()
+            if space is None:
+                return jsonify(error="space not found"), 404
+
+            cur.execute(
+                "SELECT 1 FROM bookings "
+                "WHERE space_id = %s AND start_time <= now() AND end_time > now()",
+                (space_id,),
+            )
+            booked = cur.fetchone() is not None
+
+        return jsonify({**space, "available": not booked})
+
     @app.delete("/spaces/<int:space_id>")
     def delete_space(space_id):
         with app.db.cursor() as cur:
