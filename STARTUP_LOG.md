@@ -447,3 +447,29 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Get a teammate to review and merge PR #51.
 - Gregory or Annabel to pick the next issue from the backlog.
+
+#### Part 2: Add GET /spaces/<id> (issue #13)
+
+**People and contributions**
+- Flurina picked up issue #13 and implemented it.
+
+**Progress and evidence**
+- `GET /spaces/<id>` now returns a single space's data (same shape as one entry in `GET /spaces`, including `available`), and 404 for an unknown id.
+- Verified with `pytest -q` (29 passed: 27 existing + 2 new).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/53
+
+**Decisions and reasons**
+- Picked #13 next since it's small, needs no schema changes, and doesn't touch `create_booking` - no overlap with the still-unmerged race-condition fix (#50, PR #51).
+
+**Attempts and problems**
+- None - small change, mirrors the existing `GET /spaces` query.
+
+**Shortcuts and unfinished work**
+- Remaining open issues: consistent error shapes, list all bookings (not per space), require a member name, capacity validation, reject invalid space input, update a space, ownership checks on cancel/unlock, env var docs, README update, homepage space list.
+
+**Help and tools**
+- Used Claude Code again. This time I had it propose the change first without applying anything, reviewed the diff, applied it myself, and ran the tests myself before pushing.
+
+**Next steps**
+- Get teammates to review and merge PRs #51, #52, #53.
+- Gregory or Annabel to pick the next issue from the backlog.
