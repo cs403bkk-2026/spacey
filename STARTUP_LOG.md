@@ -607,3 +607,31 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: small follow-up issue for the `price_cents: true` case. Owner: whoever is business owner next.
+
+#### Part 8: Update a space (issue #18)
+
+**People and contributions**
+- Gregory and Annabel implemented #18. Annabel reviewed and approved the PR. Still needs main merged in before it can be merged (the homepage PR #69 landed in between).
+
+**Progress and evidence**
+- New `PATCH /spaces/<id>`: updates `name` and/or `capacity`, only what's sent. 404 for an unknown space, 400 for empty/invalid values with the same messages as creating a space.
+- 5 new tests, including one that checks a space's bookings survive the update (the whole reason for the issue). 46 passed locally, CI green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/70
+
+**Decisions and reasons**
+- Moved the name/capacity checks from #17 into two small functions (`is_valid_name`, `is_valid_capacity`) so creating and updating a space follow the exact same rules instead of two copies drifting apart.
+
+**Attempts and problems**
+- While running the tests 20+ times, the flaky concurrency test from #51 failed again, and this time we caught the actual error: Postgres sometimes detects a **deadlock** between the two simultaneous bookings. Postgres cancels one of them (fine), but we only catch `ExclusionViolation`, so that member gets a 500 instead of a 409. The failing runs were always ~1 second slower, which matches Postgres's 1-second deadlock check - that's what gave it away. Not caused by this PR (fails on main too).
+
+**Shortcuts and unfinished work**
+- `price_cents` can't be updated yet (not part of #18).
+- Lowering capacity isn't checked against existing bookings, since `party_size` isn't stored.
+- Deadlock fix not done yet - separate issue.
+
+**Help and tools**
+- Used Claude Code to write the endpoint and tests, and to dig into the flaky test (it re-ran the suite until it failed and pulled the deadlock out of the Postgres logs). Gregory reviewed the diff, Annabel reviewed the PR.
+
+**Next steps**
+- Action: merge main into `update_space`, re-run tests, merge PR #70. Owner: Annabel and Gregory.
+- Action: open an issue + fix for the deadlock (also catch `DeadlockDetected`, return 409). Owner: Flurina and Gregory.
