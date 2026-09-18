@@ -257,7 +257,9 @@ def create_app(
     @app.post("/spaces/<int:space_id>/bookings")
     def create_booking(space_id):
         with app.db.cursor() as cur:
-            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
+            cur.execute(
+                "SELECT id, capacity FROM spaces WHERE id = %s", (space_id,)
+            )
             space = cur.fetchone()
             if space is None:
                 return jsonify(error="space not found"), 404
@@ -266,6 +268,7 @@ def create_app(
             member = body.get("member", "guest")
             start_time = parse_time(body.get("start_time"))
             end_time = parse_time(body.get("end_time"))
+            party_size = body.get("party_size", 1)
 
             if start_time is None or end_time is None:
                 return jsonify(
@@ -274,6 +277,20 @@ def create_app(
                 ), 400
             if end_time <= start_time:
                 return jsonify(error="end_time must be after start_time"), 400
+            # bool is a subclass of int in Python, so rule out true/false
+            if (
+                not isinstance(party_size, int)
+                or isinstance(party_size, bool)
+                or party_size < 1
+            ):
+                return jsonify(
+                    error="party_size must be a whole number of at least 1"
+                ), 400
+            if party_size > space["capacity"]:
+                return jsonify(
+                    error=f"party_size {party_size} exceeds this space's "
+                    f"capacity of {space['capacity']}"
+                ), 400
 
             # Overlap = starts before the other ends AND ends after the
             # other starts. Back-to-back bookings (10-11, 11-12) are allowed.
