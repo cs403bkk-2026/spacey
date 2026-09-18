@@ -441,3 +441,27 @@ def test_list_bookings_for_unknown_space_returns_404():
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "space not found"}
+
+def test_list_bookings_returns_bookings_across_all_spaces():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
+    later = client.post(
+        "/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)}
+    ).get_json()
+    earlier = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    response = client.get("/bookings")
+
+    # bookings from both spaces, earliest first
+    assert response.status_code == 200
+    assert response.get_json() == {"bookings": [earlier, later]}
+
+def test_list_bookings_when_there_are_none_is_empty():
+    client = make_client()
+
+    response = client.get("/bookings")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"bookings": []}
