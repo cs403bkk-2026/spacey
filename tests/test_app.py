@@ -441,3 +441,66 @@ def test_list_bookings_for_unknown_space_returns_404():
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "space not found"}
+
+def test_booking_more_people_than_capacity_is_rejected():
+    client = make_client()
+
+    # Founders Desk (space 1) has capacity 1
+    response = client.post(
+        "/spaces/1/bookings",
+        json={"member": "annabel", "party_size": 2, **slot(1, 2)},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "party_size 2 exceeds this space's capacity of 1"
+    }
+    assert client.get("/spaces/1/bookings").get_json() == {"bookings": []}
+
+def test_booking_up_to_capacity_is_allowed():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
+
+    response = client.post(
+        "/spaces/2/bookings",
+        json={"member": "annabel", "party_size": 6, **slot(1, 2)},
+    )
+
+    assert response.status_code == 201
+
+def test_booking_with_invalid_party_size_is_rejected():
+    client = make_client()
+
+    for party_size in [0, -3, "two", 1.5, True]:
+        response = client.post(
+            "/spaces/1/bookings",
+            json={"member": "annabel", "party_size": party_size, **slot(1, 2)},
+        )
+
+        assert response.status_code == 400
+        assert response.get_json() == {
+            "error": "party_size must be a whole number of at least 1"
+        }
+def test_list_bookings_returns_bookings_across_all_spaces():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
+    later = client.post(
+        "/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)}
+    ).get_json()
+    earlier = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    response = client.get("/bookings")
+
+    # bookings from both spaces, earliest first
+    assert response.status_code == 200
+    assert response.get_json() == {"bookings": [earlier, later]}
+
+def test_list_bookings_when_there_are_none_is_empty():
+    client = make_client()
+
+    response = client.get("/bookings")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"bookings": []}
