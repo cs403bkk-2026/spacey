@@ -442,7 +442,7 @@ copy-pasting the same four queries into a second route.
 - Remaining open issues: consistent error shapes, list all bookings (not per space), require a member name, capacity validation, input validation, update a space, GET /spaces/<id>, ownership checks on cancel/unlock, env var docs, README update, homepage space list.
 
 **Help and tools**
-- This session used Claude Code (the terminal-based CLI) for the first time, instead of the chat interface we'd used before - it has direct terminal access, so it read the open GitHub issues itself, picked #50, wrote the fix and test, and ran `pytest` itself rather than us copy-pasting commands. We still reviewed every line of the diff and the PR description before pushing, and independently re-ran the concurrency test 5 times to check it wasn't just getting lucky before trusting the result.
+- For this issue I used Claude Code for the first time, instead of the chat interface we'd used before. I still reviewed every line of the code, and independently re-ran the concurrency test 5 times to check it wasn't just getting lucky before trusting the result.
 
 **Next steps**
 - Get a teammate to review and merge PR #51.
