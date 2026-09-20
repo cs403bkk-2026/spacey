@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import psycopg
 from flask import Flask, jsonify, request
 from markupsafe import escape
-from psycopg.errors import ExclusionViolation
+from psycopg.errors import DeadlockDetected, ExclusionViolation
 from psycopg.rows import dict_row
 
 DATABASE_URL = os.getenv(
@@ -397,7 +397,7 @@ def create_app(
                     # unpaid until POST /bookings/<id>/pay is called
                     (space_id, member, False, start_time, end_time),
                 )
-            except ExclusionViolation:
+            except (DeadlockDetected, ExclusionViolation):
                 # The pre-check above already caught this in the common
                 # case; this only fires when two requests raced past it.
                 return jsonify(
