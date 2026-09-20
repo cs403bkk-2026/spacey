@@ -393,8 +393,8 @@ def create_app(
                     "(space_id, member, paid, start_time, end_time) "
                     "VALUES (%s, %s, %s, %s, %s) "
                     "RETURNING id, space_id, member, paid, start_time, end_time",
-                    # mocked payment: always succeeds
-                    (space_id, member, True, start_time, end_time),
+                    # unpaid until POST /bookings/<id>/pay is called
+                    (space_id, member, False, start_time, end_time),
                 )
             except ExclusionViolation:
                 # The pre-check above already caught this in the common
@@ -437,6 +437,24 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "DELETE FROM bookings WHERE id = %s "
+                "RETURNING id, space_id, member, paid, start_time, end_time",
+                (booking_id,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            return jsonify(error="booking not found"), 404
+
+        return jsonify(booking_to_json(row))
+
+    @app.post("/bookings/<int:booking_id>/pay")
+    def pay_booking(booking_id):
+        # Mocked payment: no real provider, it always succeeds. Paying an
+        # already-paid booking is a no-op rather than an error, so a
+        # retried request can't break the flow.
+        with app.db.cursor() as cur:
+            cur.execute(
+                "UPDATE bookings SET paid = TRUE WHERE id = %s "
                 "RETURNING id, space_id, member, paid, start_time, end_time",
                 (booking_id,),
             )
