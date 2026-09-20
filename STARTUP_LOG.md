@@ -662,3 +662,33 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Whoever's free next: pick up #65 (booking form), now that #49 unblocks it.
+
+## 2026-09-20 - Day 7
+
+#### Part 1: Bookings start unpaid, mocked pay endpoint (issue #74)
+
+**People and contributions**
+- We all implemented #74. Flurina reviewed, approved and merged it.
+
+**Progress and evidence**
+- Bookings are now created with `paid: false`, and a new `POST /bookings/<id>/pay` flips them to paid (404 if the booking doesn't exist). Unlocking before paying now actually fails with the existing 402 "booking is not paid".
+- 4 new tests, 5 existing ones updated to do the pay step. 52 passed (5 runs), CI green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/76
+
+**Decisions and reasons**
+- Came out of the meeting with Maksym: payment should be a visible step in the flow, not something that silently happens on booking, even while the money movement stays fake.
+- Paying twice just returns the paid booking instead of erroring, so a double-click or a retry can't break the flow.
+
+**Attempts and problems**
+- Changing the default broke a test we didn't expect: the dashboard test checked for `$15.00` revenue, which is now $0.00 until someone pays. Fixed by paying in the test first. Same for the metrics revenue test.
+
+**Shortcuts and unfinished work**
+- Payment is still completely fake - no provider, no amount checked, no failure case.
+- No UI for it yet: #75 (Pay button) is the follow-up.
+- Revenue on the dashboard now only counts bookings that went through `/pay`, so the number will look lower than before - that's intentional, it's just honest now.
+
+**Help and tools**
+- Used Claude Code for the change and tests. Gregory ran the tests and reviewed the diff, Flurina reviewed the PR.
+
+**Next steps**
+- Action: #75 (Pay button in the UI), now that the endpoint exists. Owner: Annabel and Gregory
