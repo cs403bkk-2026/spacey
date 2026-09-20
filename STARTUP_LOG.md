@@ -663,6 +663,30 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Whoever's free next: pick up #65 (booking form), now that #49 unblocks it.
 
+#### Part 2: Navigation links (issue #73)
+
+**People and contributions**
+- Picked #73 specifically because it's isolated from Gregory's in-progress work on #74 (unpaid bookings/pay endpoint) - zero overlap zero conflict risk. Flurina implemented it.
+
+**Progress and evidence**
+- Added a link from / to /dashboard, and back.
+- Verified with pytest, including two new tests confirming each link renders.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/79
+
+**Decisions and reasons**
+- Kept it to a plain text link, no nav bar - matches Maksym's guidance to keep the UI basic and functional for now, not polished.
+
+**Attempts and problems**
+- None - small, isolated change.
+
+**Shortcuts and unfinished work**
+- Still no real navigation (header/menu) - just two links. Fine for now given the "basic UI" guidance.
+
+**Help and tools**
+- Used Claude to help implement and test the change. Ran the tests ourselves before merging.
+
+**Next steps**
+- Once #74 merges, pick up #75 (Pay button) next.
 ## 2026-09-20 - Day 7
 
 #### Part 1: Bookings start unpaid, mocked pay endpoint (issue #74)
