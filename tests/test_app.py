@@ -184,7 +184,7 @@ def test_create_booking_for_existing_space_succeeds():
         "id": 1,
         "space_id": 1,
         "member": "annabel",
-        "paid": True,
+        "paid": False,  # unpaid until /pay is called
         **slot(1, 2),
     }
 
@@ -301,7 +301,7 @@ def test_find_booking_returns_the_booking():
         "id": 1,
         "space_id": 1,
         "member": "annabel",
-        "paid": True,
+        "paid": False,
         **slot(1, 2),
     }
 
@@ -338,11 +338,56 @@ def test_cancel_unknown_booking_returns_404():
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
 
+def test_pay_flips_a_booking_to_paid():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    assert created["paid"] is False
+
+    response = client.post(f"/bookings/{created['id']}/pay")
+
+    assert response.status_code == 200
+    assert response.get_json() == {**created, "paid": True}
+    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is True
+
+def test_paying_twice_is_still_paid():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay")
+
+    response = client.post(f"/bookings/{created['id']}/pay")
+
+    assert response.status_code == 200
+    assert response.get_json()["paid"] is True
+
+def test_pay_unknown_booking_returns_404():
+    client = make_client()
+
+    response = client.post("/bookings/999/pay")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "booking not found"}
+
+def test_unlock_before_paying_is_rejected():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
+    ).get_json()
+
+    response = client.post(f"/bookings/{created['id']}/unlock")
+
+    assert response.status_code == 402
+    assert response.get_json() == {"error": "booking is not paid"}
+
 def test_unlock_a_paid_booking_returns_an_access_code():
     client = make_client()
     created = client.post(
         "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
     ).get_json()
+    client.post(f"/bookings/{created['id']}/pay")
 
     response = client.post(f"/bookings/{created['id']}/unlock")
 
@@ -383,8 +428,14 @@ def test_metrics_reports_revenue_from_paid_bookings():
         "/spaces",
         json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
     )
-    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)})
+    booking = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
 
+    # unpaid bookings bring in nothing yet
+    assert client.get("/metrics").get_json()["revenue_cents"] == 0
+
+    client.post(f"/bookings/{booking['id']}/pay")
     response = client.get("/metrics")
 
     assert response.status_code == 200
@@ -411,7 +462,10 @@ def test_dashboard_shows_current_metrics():
         "/spaces",
         json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
     )
-    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)})
+    booking = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{booking['id']}/pay")  # revenue only counts paid
 
     response = client.get("/dashboard")
 
