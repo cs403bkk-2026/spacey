@@ -632,3 +632,22 @@ def test_update_space_with_invalid_values_is_rejected():
 
     # nothing changed
     assert client.get("/spaces/1").get_json()["name"] == "Founders Desk"
+
+
+def test_homepage_links_to_dashboard():
+    client = make_client()
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'href="/dashboard"' in body
+
+def test_dashboard_links_back_to_homepage():
+    client = make_client()
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'href="/"' in body

@@ -181,6 +181,7 @@ def create_app(
           <body>
             <h1>Spacey</h1>
             <ul>{items}</ul>
+            <p><a href="/dashboard">View business metrics</a></p>
           </body>
         </html>
         """
@@ -488,6 +489,7 @@ def create_app(
               <li>Members: {data['members']}</li>
               <li>Revenue: {revenue_display}</li>
             </ul>
+            <p><a href="/">Back to spaces</a></p>
           </body>
         </html>
         """
