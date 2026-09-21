@@ -782,3 +782,33 @@ copy-pasting the same four queries into a second route.
 - Action: #46 (README) before the handover - the current setup steps still don't mention `docker compose up db -d` or the 5433 port.
 - Action: decide whether PATCH /spaces should support price_cents, so #78 can go ahead. Owner: Annabel (business owner).
 - Action: #84 only needs a test that revenue goes up once. Owner: whoever is free.
+
+#### Part 3: Availability for a requested time window (issue #56)
+
+**People and contributions**
+- Annabel picked #56 and told Flurina to implemented it.
+
+**Progress and evidence**
+- `GET /spaces` and `GET /spaces/<id>` accept optional `?start_time=&end_time=`. With them, `available` means free for that whole window (same overlap rule as booking creation, back-to-back is fine); without them it still means "right now".
+- `pytest -q tests`: 66 passed, 5 runs in a row (61 existing, 5 new).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/92
+
+**Decisions and reasons**
+- Picked #56 because it answers the core question of the product ("is this free next Tuesday 2-4pm?") and only touches the spaces endpoints, so no overlap with Annabel's booking form work.
+- Left out #66/#75 (confirmation page, Pay/Unlock buttons) on purpose: the Day 7 log names Annabel and Gregory as owners and we couldn't see whether they had started.
+- Both params are required together, with a timezone; otherwise a 400 that says why. The response shape did not change.
+
+**Attempts and problems**
+- One of my new tests (the back-to-back boundary) also passed on the old code, so it proved nothing. Fixed it by booking the space right now, which makes the old code fail.
+- A literal `+` in a query string becomes a space, so `+07:00` gives a 400. Use `Z` or `%2B`. The error message now suggests `Z`.
+
+**Shortcuts and unfinished work**
+- The homepage still shows availability for "right now" and the booking form doesn't use the window yet.
+- No timezone default for the query params.
+
+**Help and tools**
+- Used Claude Code to implement app.py and test_app.py. I checked that the new tests fail with `app.py` reverted to main, re-ran the suite 5 times and reviewed the diff.
+
+**Next steps**
+- Action: tell Annabel and Gregory that #56 is done, and check who takes #66/#75 (confirmation page, Pay, Unlock). Owner: Flurina.
+- Action: decide whether the homepage should show availability for the time slot a person types into the form. Owner: Annabel (business owner).
