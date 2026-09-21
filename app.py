@@ -110,6 +110,11 @@ def is_valid_capacity(capacity) -> bool:
     )
 
 
+def local_time(value: datetime) -> str:
+    """For the HTML pages: Bangkok time, no seconds or offset clutter."""
+    return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+
+
 def booking_to_json(row: dict) -> dict:
     return {
         **row,
@@ -209,14 +214,10 @@ def create_app(
             for row in rows
         )
 
-        # Set by the redirect after the form posts (see book_from_form)
+        # Set by the redirect when a form booking fails (see book_from_form);
+        # a successful one goes to the confirmation page instead.
         message = ""
-        if request.args.get("booked"):
-            message = (
-                f"<p>Booked! Booking #{escape(request.args['booked'])} - "
-                f"not paid yet.</p>"
-            )
-        elif request.args.get("error"):
+        if request.args.get("error"):
             message = f"<p>Could not book: {escape(request.args['error'])}</p>"
 
         return f"""
@@ -475,7 +476,87 @@ def create_app(
         if status >= 400:
             return redirect(url_for("index", error=payload["error"]))
 
-        return redirect(url_for("index", booked=payload["id"]))
+        return redirect(url_for("booking_confirmation", booking_id=payload["id"]))
+
+    @app.get("/bookings/<int:booking_id>/confirmation")
+    def booking_confirmation(booking_id):
+        """What a member sees after booking: the details, a Pay button and,
+        once paid, an Unlock button that shows the access code."""
+        with app.db.cursor() as cur:
+            cur.execute(
+                "SELECT b.id, b.member, b.paid, b.start_time, b.end_time, "
+                "s.name AS space_name "
+                "FROM bookings b JOIN spaces s ON s.id = b.space_id "
+                "WHERE b.id = %s",
+                (booking_id,),
+            )
+            booking = cur.fetchone()
+
+        if booking is None:
+            return "<p>Booking not found. <a href='/'>Back to spaces</a></p>", 404
+
+        if booking["paid"]:
+            action = f"""
+              <p>Paid.</p>
+              <form method="post" action="/bookings/{booking_id}/confirmation/unlock">
+                <button type="submit">Unlock</button>
+              </form>
+            """
+        else:
+            action = f"""
+              <p>Not paid yet - pay to get your access code.</p>
+              <form method="post" action="/bookings/{booking_id}/confirmation/pay">
+                <button type="submit">Pay</button>
+              </form>
+            """
+
+        message = ""
+        if request.args.get("code"):
+            message = (
+                f"<p>Your access code: <strong>"
+                f"{escape(request.args['code'])}</strong></p>"
+            )
+        elif request.args.get("error"):
+            message = f"<p>{escape(request.args['error'])}</p>"
+
+        return f"""
+        <html>
+          <head><title>Spacey - Booking #{booking_id}</title></head>
+          <body>
+            <h1>Booking #{booking_id}</h1>
+            <p>{escape(booking['space_name'])} for {escape(booking['member'])}</p>
+            <p>{local_time(booking['start_time'])}
+               to {local_time(booking['end_time'])} (Bangkok time)</p>
+            {action}
+            {message}
+            <p><a href="/">Back to spaces</a></p>
+          </body>
+        </html>
+        """
+
+    @app.post("/bookings/<int:booking_id>/confirmation/pay")
+    def pay_from_confirmation(booking_id):
+        mark_booking_paid(booking_id)  # mocked payment, same as the API
+        return redirect(url_for("booking_confirmation", booking_id=booking_id))
+
+    @app.post("/bookings/<int:booking_id>/confirmation/unlock")
+    def unlock_from_confirmation(booking_id):
+        payload, status = issue_access_code(booking_id)
+        if status >= 400:
+            return redirect(
+                url_for(
+                    "booking_confirmation",
+                    booking_id=booking_id,
+                    error=payload["error"],
+                )
+            )
+        return redirect(
+            url_for(
+                "booking_confirmation",
+                booking_id=booking_id,
+                code=payload["access_code"],
+            )
+        )
 
     @app.get("/bookings")
     def list_bookings():
@@ -518,26 +599,21 @@ def create_app(
 
         return jsonify(booking_to_json(row))
 
-    @app.post("/bookings/<int:booking_id>/pay")
-    def pay_booking(booking_id):
-        # Mocked payment: no real provider, it always succeeds. Paying an
-        # already-paid booking is a no-op rather than an error, so a
-        # retried request can't break the flow.
+    def mark_booking_paid(booking_id):
+        """Mocked payment: no provider, always succeeds. Paying an
+        already-paid booking is a no-op rather than an error, so a retried
+        request can't break the flow. Returns the booking, or None."""
         with app.db.cursor() as cur:
             cur.execute(
                 "UPDATE bookings SET paid = TRUE WHERE id = %s "
                 "RETURNING id, space_id, member, paid, start_time, end_time",
                 (booking_id,),
             )
-            row = cur.fetchone()
+            return cur.fetchone()
 
-        if row is None:
-            return jsonify(error="booking not found"), 404
-
-        return jsonify(booking_to_json(row))
-
-    @app.post("/bookings/<int:booking_id>/unlock")
-    def unlock_booking(booking_id):
+    def issue_access_code(booking_id):
+        """Shared by the JSON API and the Unlock button.
+        Returns (payload, status)."""
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT id, paid FROM bookings WHERE id = %s", (booking_id,)
@@ -545,13 +621,25 @@ def create_app(
             booking = cur.fetchone()
 
         if booking is None:
-            return jsonify(error="booking not found"), 404
-
+            return {"error": "booking not found"}, 404
         if not booking["paid"]:
-            return jsonify(error="booking is not paid"), 402
+            return {"error": "booking is not paid"}, 402
 
         access_code = secrets.token_hex(4)  # mocked lock integration
-        return jsonify(booking_id=booking_id, access_code=access_code)
+        return {"booking_id": booking_id, "access_code": access_code}, 200
+
+    @app.post("/bookings/<int:booking_id>/pay")
+    def pay_booking(booking_id):
+        row = mark_booking_paid(booking_id)
+        if row is None:
+            return jsonify(error="booking not found"), 404
+
+        return jsonify(booking_to_json(row))
+
+    @app.post("/bookings/<int:booking_id>/unlock")
+    def unlock_booking(booking_id):
+        payload, status = issue_access_code(booking_id)
+        return jsonify(payload), status
 
     @app.get("/metrics")
     def metrics():

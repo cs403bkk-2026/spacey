@@ -67,16 +67,78 @@ def test_booking_through_the_form_makes_the_space_unavailable():
     )
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "/?booked=1"
+    assert response.headers["Location"] == "/bookings/1/confirmation"
 
-    body = client.get("/?booked=1").get_data(as_text=True)
-    assert "Booked! Booking #1" in body
+    body = client.get("/").get_data(as_text=True)
     assert "booked" in body
     assert "<form" not in body  # the only space is taken now
 
     booking = client.get("/bookings/1").get_json()
     assert booking["member"] == "annabel"
     assert booking["paid"] is False
+
+def test_book_pay_unlock_all_the_way_through_the_browser():
+    client = make_client()
+
+    booked = client.post(
+        "/spaces/1/book", data={"member": "annabel", **form_slot(-1, 1)}
+    )
+    page = client.get(booked.headers["Location"]).get_data(as_text=True)
+
+    # the confirmation page shows the booking, and asks for payment first
+    assert "Booking #1" in page
+    assert "Founders Desk" in page
+    assert "annabel" in page
+    assert "Not paid yet" in page
+    assert ">Pay</button>" in page
+    assert ">Unlock</button>" not in page
+
+    paid = client.post("/bookings/1/confirmation/pay")
+    page = client.get(paid.headers["Location"]).get_data(as_text=True)
+
+    assert "Paid." in page
+    assert ">Unlock</button>" in page
+
+    unlocked = client.post("/bookings/1/confirmation/unlock")
+    page = client.get(unlocked.headers["Location"]).get_data(as_text=True)
+
+    assert "Your access code:" in page
+    code = page.split("<strong>")[1].split("</strong>")[0]
+    assert len(code) == 8  # secrets.token_hex(4)
+
+def test_confirmation_page_unlock_without_paying_shows_the_error():
+    client = make_client()
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
+
+    response = client.post("/bookings/1/confirmation/unlock")
+    page = client.get(response.headers["Location"]).get_data(as_text=True)
+
+    assert "booking is not paid" in page
+    assert "Your access code" not in page
+
+def test_confirmation_page_for_unknown_booking_returns_404():
+    client = make_client()
+
+    response = client.get("/bookings/999/confirmation")
+
+    assert response.status_code == 404
+    assert "Booking not found" in response.get_data(as_text=True)
+
+def test_confirmation_page_shows_times_in_bangkok_time():
+    client = make_client()
+    client.post(
+        "/spaces/1/book",
+        data={
+            "member": "annabel",
+            "start_time": "2026-09-25T09:00",
+            "end_time": "2026-09-25T10:00",
+        },
+    )
+
+    page = client.get("/bookings/1/confirmation").get_data(as_text=True)
+
+    assert "2026-09-25 09:00" in page
+    assert "2026-09-25 10:00" in page
 
 def test_form_times_are_read_as_bangkok_time():
     client = make_client()
