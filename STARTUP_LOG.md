@@ -812,3 +812,33 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: tell Annabel and Gregory that #56 is done, and check who takes #66/#75 (confirmation page, Pay, Unlock). Owner: Flurina.
 - Action: decide whether the homepage should show availability for the time slot a person types into the form. Owner: Annabel (business owner).
+
+#### Part 4: Let the mocked payment fail (issues #83, #84)
+
+**People and contributions**
+- Annabel (business owner) picked #83 and assigned it to Flurina, who implemented it. #84 turned out to be covered by the same endpoint, so it was closed with it.
+
+**Progress and evidence**
+- `POST /bookings/<id>/pay` now takes an optional `{"force_failure": true}`. It returns 402 "payment failed" and the booking stays unpaid, so unlock returns 402 and no revenue is counted. Without the flag (or with `false`) nothing changes, and an already paid booking stays paid.
+- #84: a new test pays the same booking twice and checks `revenue_cents` only went up once. This already worked because revenue counts the `paid` flag, so no code was needed for it.
+- `pytest -q tests`: 71 passed, 5 runs in a row (66 existing, 5 new). The two failure-path tests fail on main's `app.py`; the other three pin behaviour that must not change.
+- PR: <PR LINK>
+
+**Decisions and reasons**
+- Failure is opt-in through the request body, as #83 suggested, so the normal flow and the coming Pay button (#75) don't have to change.
+- Used 402 like the unlock endpoint already does for an unpaid booking.
+- A failed attempt is not stored anywhere (it is a mock); the booking just stays unpaid so it can be retried.
+
+**Attempts and problems**
+- #83 still says `create_booking` inserts `paid=True`, which was true before #74. We put the failure on the pay endpoint instead.
+- Correction to Part 1: I wrote there that the flaky concurrency test was "not fixed yet". It already was (a deadlock now returns 409). The test passed 40 runs in a row on main.
+
+**Shortcuts and unfinished work**
+- There is no Pay button yet (#75), so the failure can only be triggered through the API, not the browser.
+- Payment is still a mock: no provider, no amount charged.
+
+**Help and tools**
+- Used Claude Code to draft the change in `app.py` and the tests in `test_app.py`. I read the diff, checked that the failure tests fail on main's `app.py`, and re-ran the suite 5 times before pushing.
+
+**Next steps**
+- Action: #66 (confirmation page) and #75 (Pay button); the Pay button should show the "payment failed" message. Owner: Annabel and Gregory.
