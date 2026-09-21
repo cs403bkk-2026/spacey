@@ -900,7 +900,37 @@ copy-pasting the same four queries into a second route.
 - Action: #80 (price by duration) can now build on the stored amount. Owner: Annabel to prioritise.
 - Action: decide whether PATCH /spaces should be able to change the price (new issue).
 
-#### Part 7: Let PATCH change a space's price (issue #105)
+#### Part 7: Mocked subscriptions, not just pay-once (issue #101)
+
+**People and contributions**
+- Annabel (business owner) picked #101 and assigned it to Flurina, who implemented it.
+
+**Progress and evidence**
+- New `POST /members/<name>/subscribe` (mocked, always succeeds, subscribing again changes nothing) and a small `subscriptions` table. A member with an active subscription gets bookings that are created already paid, so they skip the Pay step and can unlock straight away. Members without a subscription go through the pay-once flow exactly as before.
+- Names are matched trimmed and lower-case, so "Annabel" and "annabel " are the same subscriber.
+- `pytest -q tests`: 91 passed, 5 runs in a row (83 existing, 8 new). 7 of the 8 new tests fail on main's `app.py`; the eighth guards the unchanged pay-once flow.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/109
+
+**Decisions and reasons**
+- This is the biggest gap against the brief ("pay once or subscribe"), so we took it before the smaller issues.
+- A subscriber's booking is stored with amount 0: the subscription covers it, and charging the space price would count revenue that never moved.
+- Kept it to the thin slice in the issue: no cancel, no price, no page to subscribe.
+
+**Attempts and problems**
+- `reset_tables` had to clear the new table as well; otherwise a subscription made in one test would still be there in the next and quietly change its result.
+
+**Shortcuts and unfinished work**
+- Subscription income is not modelled at all: there is no fee, so the dashboard shows nothing for it.
+- Subscribing is API only; there is no page or button for it, and no way to cancel.
+- Identity is still just a name (#86), so anyone can subscribe as anyone.
+
+**Help and tools**
+- Used Claude Code to draft the change in `app.py` and the tests in `test_app.py`. I read the diff, checked that the new tests fail on main's `app.py`, re-ran the suite 5 times, and ran the app on a throwaway database to click through a subscriber booking and a normal one before pushing.
+
+**Next steps**
+- Action: Annabel to confirm the amount-0 decision, and whether subscriptions need a price and a cancel next.
+- Action: a way to subscribe from the browser (new issue).
+#### Part 8: Let PATCH change a space's price (issue #105)
 
 **People and contributions**
 - Annabel (business owner) picked #105 and assigned it to Flurina, who implemented it.
