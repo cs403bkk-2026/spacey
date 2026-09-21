@@ -635,6 +635,56 @@ def test_metrics_reports_revenue_from_paid_bookings():
     body = response.get_json()
     assert body["revenue_cents"] == 1500
 
+def test_revenue_stays_the_same_when_the_space_price_changes_later():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 500},
+    )
+    booking = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{booking['id']}/pay")
+    assert client.get("/metrics").get_json()["revenue_cents"] == 500
+
+    # PATCH can't change a price yet, so change it straight in the database
+    with app.db.cursor() as cur:
+        cur.execute("UPDATE spaces SET price_cents = 2000 WHERE id = 2")
+
+    assert client.get("/metrics").get_json()["revenue_cents"] == 500
+
+    # a booking made after the price change is charged the new price
+    later = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(3, 4)}
+    ).get_json()
+    client.post(f"/bookings/{later['id']}/pay")
+    assert client.get("/metrics").get_json()["revenue_cents"] == 2500
+
+def test_startup_fills_in_the_amount_on_bookings_made_before_the_column_existed():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    with app.db.cursor() as cur:
+        # a paid booking from before amount_cents existed, so it has no amount
+        cur.execute(
+            "INSERT INTO bookings (space_id, member, paid, start_time, end_time) "
+            "VALUES (2, 'old-member', TRUE, "
+            "now() + interval '1 day', now() + interval '2 days')"
+        )
+        cur.execute("SELECT amount_cents FROM bookings")
+        assert cur.fetchone()["amount_cents"] is None
+
+    create_app(reset_on_start=False)  # the next app start runs the backfill
+
+    with app.db.cursor() as cur:
+        cur.execute("SELECT amount_cents FROM bookings")
+        assert cur.fetchone()["amount_cents"] == 1500
+    assert client.get("/metrics").get_json()["revenue_cents"] == 1500
+
 def test_health_reports_error_when_database_is_unreachable():
     app = create_app(reset_on_start=True)
     app.db.close()  # simulate a lost/broken database connection
