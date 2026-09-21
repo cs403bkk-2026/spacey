@@ -46,6 +46,16 @@ def get_connection(database_url: str) -> psycopg.Connection:
             "ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ, "
             "ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ"
         )
+        # Price charged at booking time, so a later price change can't rewrite past revenue.
+        cur.execute(
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount_cents INTEGER"
+        )
+        # Bookings from before that column existed get the space's current price (best we have).
+        cur.execute(
+            "UPDATE bookings SET amount_cents = s.price_cents "
+            "FROM spaces s "
+            "WHERE s.id = bookings.space_id AND bookings.amount_cents IS NULL"
+        )
         # Belt-and-suspenders against double-booking: the app already checks
         # for overlaps before inserting, but that check-then-insert isn't
         # atomic, so two simultaneous requests could both pass the check.
@@ -144,6 +154,10 @@ def is_valid_capacity(capacity) -> bool:
     )
 
 
+def is_valid_price(price) -> bool:
+    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
+
+
 def local_time(value: datetime) -> str:
     """For the HTML pages: Bangkok time, no seconds or offset clutter."""
     return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
@@ -172,9 +186,7 @@ def compute_metrics(cur) -> dict:
     total_members = cur.fetchone()["count"]
 
     cur.execute(
-        "SELECT COALESCE(SUM(s.price_cents), 0) AS total "
-        "FROM bookings b JOIN spaces s ON s.id = b.space_id "
-        "WHERE b.paid"
+        "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM bookings WHERE paid"
     )
     revenue_cents = cur.fetchone()["total"]
 
@@ -312,7 +324,7 @@ def create_app(
                 error="capacity must be a whole number of at least 1"
             ), 400
         name = name.strip()
-        if not isinstance(price_cents, int) or price_cents < 0:
+        if not is_valid_price(price_cents):
             return jsonify(
                 error="price_cents must be a non-negative integer"
             ), 400
@@ -349,8 +361,10 @@ def create_app(
     @app.patch("/spaces/<int:space_id>")
     def update_space(space_id):
         body = request.get_json(silent=True) or {}
-        if "name" not in body and "capacity" not in body:
-            return jsonify(error="provide name and/or capacity to update"), 400
+        if not any(field in body for field in ("name", "capacity", "price_cents")):
+            return jsonify(
+                error="provide name, capacity and/or price_cents to update"
+            ), 400
 
         with app.db.cursor() as cur:
             cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
@@ -359,11 +373,16 @@ def create_app(
 
             name = body.get("name")
             capacity = body.get("capacity")
+            price_cents = body.get("price_cents")
             if "name" in body and not is_valid_name(name):
                 return jsonify(error="name must not be empty"), 400
             if "capacity" in body and not is_valid_capacity(capacity):
                 return jsonify(
                     error="capacity must be a whole number of at least 1"
+                ), 400
+            if "price_cents" in body and not is_valid_price(price_cents):
+                return jsonify(
+                    error="price_cents must be a non-negative integer"
                 ), 400
             if name is not None:
                 name = name.strip()
@@ -372,10 +391,11 @@ def create_app(
             cur.execute(
                 "UPDATE spaces "
                 "SET name = COALESCE(%s, name), "
-                "capacity = COALESCE(%s, capacity) "
+                "capacity = COALESCE(%s, capacity), "
+                "price_cents = COALESCE(%s, price_cents) "
                 "WHERE id = %s "
                 "RETURNING id, name, capacity, price_cents",
-                (name, capacity, space_id),
+                (name, capacity, price_cents, space_id),
             )
             space = cur.fetchone()
 
@@ -423,7 +443,8 @@ def create_app(
         Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, capacity FROM spaces WHERE id = %s", (space_id,)
+                "SELECT id, capacity, price_cents FROM spaces WHERE id = %s",
+                (space_id,),
             )
             space = cur.fetchone()
             if space is None:
@@ -459,11 +480,18 @@ def create_app(
             try:
                 cur.execute(
                     "INSERT INTO bookings "
-                    "(space_id, member, paid, start_time, end_time) "
-                    "VALUES (%s, %s, %s, %s, %s) "
+                    "(space_id, member, paid, start_time, end_time, amount_cents) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) "
                     "RETURNING id, space_id, member, paid, start_time, end_time",
                     # unpaid until POST /bookings/<id>/pay is called
-                    (space_id, member, False, start_time, end_time),
+                    (
+                        space_id,
+                        member,
+                        False,
+                        start_time,
+                        end_time,
+                        space["price_cents"],
+                    ),
                 )
             except (DeadlockDetected, ExclusionViolation):
                 # The pre-check above already caught this in the common

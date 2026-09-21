@@ -273,6 +273,20 @@ def test_create_space_with_negative_price_is_rejected():
         "error": "price_cents must be a non-negative integer"
     }
 
+def test_create_space_with_a_boolean_price_is_rejected():
+    client = make_client()
+
+    for price in [True, False]:
+        response = client.post(
+            "/spaces",
+            json={"name": "Meeting Room A", "capacity": 6, "price_cents": price},
+        )
+
+        assert response.status_code == 400
+        assert response.get_json() == {
+            "error": "price_cents must be a non-negative integer"
+        }
+
 def test_create_space_without_capacity_is_rejected():
     client = make_client()
 
@@ -697,6 +711,56 @@ def test_metrics_reports_revenue_from_paid_bookings():
     body = response.get_json()
     assert body["revenue_cents"] == 1500
 
+def test_revenue_stays_the_same_when_the_space_price_changes_later():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 500},
+    )
+    booking = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{booking['id']}/pay")
+    assert client.get("/metrics").get_json()["revenue_cents"] == 500
+
+    # PATCH can't change a price yet, so change it straight in the database
+    with app.db.cursor() as cur:
+        cur.execute("UPDATE spaces SET price_cents = 2000 WHERE id = 2")
+
+    assert client.get("/metrics").get_json()["revenue_cents"] == 500
+
+    # a booking made after the price change is charged the new price
+    later = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(3, 4)}
+    ).get_json()
+    client.post(f"/bookings/{later['id']}/pay")
+    assert client.get("/metrics").get_json()["revenue_cents"] == 2500
+
+def test_startup_fills_in_the_amount_on_bookings_made_before_the_column_existed():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    with app.db.cursor() as cur:
+        # a paid booking from before amount_cents existed, so it has no amount
+        cur.execute(
+            "INSERT INTO bookings (space_id, member, paid, start_time, end_time) "
+            "VALUES (2, 'old-member', TRUE, "
+            "now() + interval '1 day', now() + interval '2 days')"
+        )
+        cur.execute("SELECT amount_cents FROM bookings")
+        assert cur.fetchone()["amount_cents"] is None
+
+    create_app(reset_on_start=False)  # the next app start runs the backfill
+
+    with app.db.cursor() as cur:
+        cur.execute("SELECT amount_cents FROM bookings")
+        assert cur.fetchone()["amount_cents"] == 1500
+    assert client.get("/metrics").get_json()["revenue_cents"] == 1500
+
 def test_health_reports_error_when_database_is_unreachable():
     app = create_app(reset_on_start=True)
     app.db.close()  # simulate a lost/broken database connection
@@ -1012,6 +1076,63 @@ def test_update_space_keeps_its_bookings():
 
     assert client.get("/spaces/1/bookings").get_json() == {"bookings": [booking]}
 
+def test_update_space_price_shows_up_in_list():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 500},
+    )
+
+    response = client.patch("/spaces/2", json={"price_cents": 2000})
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "id": 2,
+        "name": "Meeting Room A",
+        "capacity": 6,
+        "price_cents": 2000,
+    }
+    listed = client.get("/spaces").get_json()["spaces"]
+    assert next(s for s in listed if s["id"] == 2)["price_cents"] == 2000
+
+    # 0 is a valid price: the space becomes free
+    free = client.patch("/spaces/2", json={"price_cents": 0})
+    assert free.get_json()["price_cents"] == 0
+
+def test_update_space_name_only_keeps_the_price():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 500},
+    )
+
+    response = client.patch("/spaces/2", json={"name": "Meeting Room B"})
+
+    assert response.get_json()["price_cents"] == 500
+
+def test_changing_a_price_with_patch_only_affects_later_bookings():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 500},
+    )
+    before = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{before['id']}/pay")
+    assert client.get("/metrics").get_json()["revenue_cents"] == 500
+
+    client.patch("/spaces/2", json={"price_cents": 2000})
+
+    # the booking made before the change keeps what it was charged
+    assert client.get("/metrics").get_json()["revenue_cents"] == 500
+
+    after = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(3, 4)}
+    ).get_json()
+    client.post(f"/bookings/{after['id']}/pay")
+    assert client.get("/metrics").get_json()["revenue_cents"] == 2500
+
 def test_update_unknown_space_returns_404():
     client = make_client()
 
@@ -1023,12 +1144,18 @@ def test_update_unknown_space_returns_404():
 def test_update_space_with_invalid_values_is_rejected():
     client = make_client()
 
+    price_error = "price_cents must be a non-negative integer"
     cases = [
-        ({}, "provide name and/or capacity to update"),
+        ({}, "provide name, capacity and/or price_cents to update"),
         ({"name": "   "}, "name must not be empty"),
         ({"name": None}, "name must not be empty"),
         ({"capacity": 0}, "capacity must be a whole number of at least 1"),
         ({"capacity": "4"}, "capacity must be a whole number of at least 1"),
+        ({"price_cents": -1}, price_error),
+        ({"price_cents": "5"}, price_error),
+        ({"price_cents": 2.5}, price_error),
+        ({"price_cents": None}, price_error),
+        ({"price_cents": True}, price_error),
     ]
     for body, error in cases:
         response = client.patch("/spaces/1", json=body)
@@ -1037,7 +1164,9 @@ def test_update_space_with_invalid_values_is_rejected():
         assert response.get_json() == {"error": error}
 
     # nothing changed
-    assert client.get("/spaces/1").get_json()["name"] == "Founders Desk"
+    space = client.get("/spaces/1").get_json()
+    assert space["name"] == "Founders Desk"
+    assert space["price_cents"] == 0
 
 
 def test_homepage_links_to_dashboard():

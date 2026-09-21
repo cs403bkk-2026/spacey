@@ -869,3 +869,33 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: the confirmation page with Pay and Unlock buttons (#66, #75) is on Gregory's branch `show_booking_conf`; needs a PR and review.
+
+#### Part 6: Store the amount charged on the booking (issue #78)
+
+**People and contributions**
+- Annabel (business owner) picked #78 and assigned it to Flurina, who implemented it.
+
+**Progress and evidence**
+- Bookings now store `amount_cents`, copied from the space's price at the moment of booking. `/metrics` sums that column instead of joining to `spaces`, so a later price change no longer rewrites past revenue.
+- Bookings that already exist get the space's current price filled in the next time the app starts, so revenue on the live system doesn't drop to zero when this deploys. The booking API responses did not change.
+- `pytest -q tests`: 75 passed, 5 runs in a row (73 existing, 2 new). Both new tests fail on main's `app.py`.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/103
+
+**Decisions and reasons**
+- The column allows NULL on purpose: it is added to a table that already has rows, and NOT NULL would either break inserts from the older running version during a deploy or need a made-up default. Old rows are filled in on startup instead.
+- Existing bookings get the space's current price because it is the best we have; we can't know what they were really charged.
+- Did not show the amount in the booking responses yet, to keep the API shape (and Gregory's confirmation page in #100) unchanged.
+
+**Attempts and problems**
+- #78 says PATCH /spaces can change a price, but PATCH only updates name and capacity. So the issue's test ("change the price with PATCH") can't be written as it stands; the test changes the price directly in the database instead. Price editing through PATCH would be a separate issue.
+
+**Shortcuts and unfinished work**
+- The amount is still just the space's price. Pricing by duration is #80, and it will work out the amount in the one place where the booking is created.
+- Cancelling and refunds (#82) don't use the amount yet, and nobody sees it on the confirmation page yet.
+
+**Help and tools**
+- Used Claude Code to draft the change in `app.py` and the tests in `test_app.py`. I read the diff, checked the new tests fail on main's `app.py`, and re-ran the suite 5 times before pushing. We also simulated the upgrade on a throwaway database (old code makes a paid booking, new code starts on it) to be sure existing revenue stays the same.
+
+**Next steps**
+- Action: #80 (price by duration) can now build on the stored amount. Owner: Annabel to prioritise.
+- Action: decide whether PATCH /spaces should be able to change the price (new issue).
