@@ -106,8 +106,13 @@ def compute_metrics(cur) -> dict:
     cur.execute("SELECT COUNT(*) AS count FROM spaces")
     total_spaces = cur.fetchone()["count"]
 
-    cur.execute("SELECT COUNT(*) AS count FROM bookings")
-    total_bookings = cur.fetchone()["count"]
+    cur.execute(
+        "SELECT COUNT(*) AS total, "
+        "COUNT(*) FILTER (WHERE paid) AS paid, "
+        "COUNT(*) FILTER (WHERE NOT paid) AS unpaid "
+        "FROM bookings"
+    )
+    booking_counts = cur.fetchone()
 
     cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
     total_members = cur.fetchone()["count"]
@@ -121,7 +126,9 @@ def compute_metrics(cur) -> dict:
 
     return {
         "spaces": total_spaces,
-        "bookings": total_bookings,
+        "bookings": booking_counts["total"],
+        "paid_bookings": booking_counts["paid"],
+        "unpaid_bookings": booking_counts["unpaid"],
         "members": total_members,
         "revenue_cents": revenue_cents,
     }
