@@ -620,6 +620,8 @@ def create_app(
             <ul>
               <li>Spaces: {data['spaces']}</li>
               <li>Bookings: {data['bookings']}</li>
+              <li>Paid bookings: {data['paid_bookings']}</li>
+              <li>Unpaid bookings: {data['unpaid_bookings']}</li>
               <li>Members: {data['members']}</li>
               <li>Revenue: {revenue_display}</li>
             </ul>
