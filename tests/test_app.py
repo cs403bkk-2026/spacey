@@ -647,6 +647,95 @@ def test_unlock_unknown_booking_returns_404():
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
 
+def test_subscribing_returns_an_active_subscription():
+    client = make_client()
+
+    response = client.post("/members/annabel/subscribe")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["member"] == "annabel"
+    assert body["active"] is True
+    assert body["started_at"]
+
+def test_subscribing_twice_keeps_the_original_start():
+    client = make_client()
+    first = client.post("/members/annabel/subscribe").get_json()
+
+    second = client.post("/members/annabel/subscribe")
+
+    assert second.status_code == 200
+    assert second.get_json() == first
+
+def test_a_blank_member_name_cannot_subscribe():
+    client = make_client()
+
+    response = client.post("/members/%20/subscribe")
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "member name must not be blank"}
+
+def test_a_subscribed_members_booking_is_paid_on_creation():
+    client = make_client()
+    client.post("/members/annabel/subscribe")
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
+    ).get_json()
+
+    assert created["paid"] is True
+    # no pay step needed to get the access code
+    unlock = client.post(f"/bookings/{created['id']}/unlock")
+    assert unlock.status_code == 200
+
+def test_a_member_without_a_subscription_still_pays_once():
+    client = make_client()
+    client.post("/members/annabel/subscribe")
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
+
+    assert created["paid"] is False
+    paid = client.post(f"/bookings/{created['id']}/pay").get_json()
+    assert paid["paid"] is True
+
+def test_subscription_matches_the_member_name_ignoring_case_and_spaces():
+    client = make_client()
+    client.post("/members/%20Annabel%20/subscribe")
+
+    lower = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    shouting = client.post(
+        "/spaces/1/bookings", json={"member": "  ANNABEL ", **slot(3, 4)}
+    ).get_json()
+
+    assert lower["paid"] is True
+    assert shouting["paid"] is True
+
+def test_a_subscribers_booking_adds_no_per_booking_revenue():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    client.post("/members/annabel/subscribe")
+
+    client.post("/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)})
+    metrics = client.get("/metrics").get_json()
+
+    assert metrics["paid_bookings"] == 1
+    assert metrics["revenue_cents"] == 0
+
+def test_form_booking_by_a_subscriber_is_paid():
+    client = make_client()
+    client.post("/members/annabel/subscribe")
+
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
+
+    assert client.get("/bookings/1").get_json()["paid"] is True
+
 def test_metrics_reports_spaces_bookings_and_members():
     client = make_client()
 
