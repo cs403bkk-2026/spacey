@@ -33,6 +33,88 @@ def test_homepage_lists_spaces_with_availability():
     assert "$15.00" in body
     assert "booked" in body
 
+BANGKOK = timezone(timedelta(hours=7))
+
+def form_slot(start_hours, end_hours):
+    """What the browser's datetime-local fields send: a local (Bangkok)
+    wall-clock time with no timezone on it."""
+    local_now = NOW.astimezone(BANGKOK)
+    return {
+        "start_time": (local_now + timedelta(hours=start_hours)).strftime(
+            "%Y-%m-%dT%H:%M"
+        ),
+        "end_time": (local_now + timedelta(hours=end_hours)).strftime(
+            "%Y-%m-%dT%H:%M"
+        ),
+    }
+
+def test_homepage_shows_a_booking_form_only_for_available_spaces():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(-1, 1)})
+
+    body = client.get("/").get_data(as_text=True)
+
+    assert '<form method="post" action="/spaces/1/book">' in body
+    assert 'name="member"' in body
+    assert body.count("<form") == 1  # space 2 is booked right now, so no form
+
+def test_booking_through_the_form_makes_the_space_unavailable():
+    client = make_client()
+
+    response = client.post(
+        "/spaces/1/book", data={"member": "annabel", **form_slot(-1, 1)}
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/?booked=1"
+
+    body = client.get("/?booked=1").get_data(as_text=True)
+    assert "Booked! Booking #1" in body
+    assert "booked" in body
+    assert "<form" not in body  # the only space is taken now
+
+    booking = client.get("/bookings/1").get_json()
+    assert booking["member"] == "annabel"
+    assert booking["paid"] is False
+
+def test_form_times_are_read_as_bangkok_time():
+    client = make_client()
+
+    client.post(
+        "/spaces/1/book",
+        data={
+            "member": "annabel",
+            "start_time": "2026-09-25T09:00",
+            "end_time": "2026-09-25T10:00",
+        },
+    )
+
+    booking = client.get("/bookings/1").get_json()
+    # 09:00 in Bangkok (UTC+7) is 02:00 UTC
+    assert booking["start_time"] == "2026-09-25T02:00:00+00:00"
+    assert booking["end_time"] == "2026-09-25T03:00:00+00:00"
+
+def test_form_booking_a_taken_slot_shows_the_error():
+    client = make_client()
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 3)})
+
+    response = client.post(
+        "/spaces/1/book", data={"member": "gregory", **form_slot(2, 4)}
+    )
+
+    assert response.status_code == 302
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+    assert "space is already booked for that time" in body
+
+def test_form_without_times_shows_an_error():
+    client = make_client()
+
+    response = client.post("/spaces/1/book", data={"member": "annabel"})
+
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+    assert "fill in a start and end time" in body
+
 def test_homepage_escapes_space_names():
     client = make_client()
     client.post(
