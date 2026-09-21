@@ -716,3 +716,37 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: #75 (Pay button in the UI), now that the endpoint exists. Owner: Annabel and Gregory
+
+## 2026-09-21 - Day 8
+
+#### Part 2: Booking form on the space list (issue #65)
+
+**People and contributions**
+- Annabel and Gregory implemented #65. Annabel reviewed, approved and merged it.
+
+**Progress and evidence**
+- Every available space on the homepage now has a small form (name + start/end time + Book button). Booking redirects back to the list, which shows "Booked! Booking #N - not paid yet" and flips the space to booked. Errors (slot taken, missing times) come back as a message on the page.
+- New `POST /spaces/<id>/book` for the form; the JSON API is unchanged. The booking rules now live in one shared `book_space()` used by both, instead of two copies.
+- 6 new tests, 59 passed locally (5 runs), CI green. Also clicked it through a running app over real HTTP to check the redirect, the message, and that the space flips to booked.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/89
+
+**Decisions and reasons**
+- The browser's date/time field sends no timezone, so form times are read as Bangkok time.
+- The page says so under the heading. The JSON API still demands an explicit timezone, so scripts can't get it wrong by accident.
+- The form posts to its own URL and redirects, rather than making the JSON endpoint return HTML sometimes - a browser form can't display JSON, and mixing the two would make both harder to follow for the handover team.
+
+**Attempts and problems**
+- First test run failed in a confusing way: a booking "happening now" showed as available. The test helper built the time from UTC wall-clock, but the app reads form times as Bangkok, so the booking landed 7 hours in the past. Fixed the helper to use Bangkok wall-clock.
+
+
+**Shortcuts and unfinished work**
+- The form always books for 1 person, no party size field yet (the API still enforces capacity).
+- No confirmation page (#66) and no Pay button (#75), so a booking made in the browser stays unpaid and can't be unlocked without curl.
+- Small API behaviour change: unknown space + missing times now returns 400 instead of 404, since times are parsed before the space lookup.
+
+**Help and tools**
+- Used Claude Code for the form, the shared booking function and the tests, and to run the app and check it end to end over HTTP. Gregory and Annabel reviewed the diff and ran the tests, Annabel reviewed the PR.
+
+**Next steps**
+- Action: #75 (Pay button) and #66 (confirmation + unlock code) - together they finish the clickable find → book → pay → unlock demo
+- Action: #46 (README) before the handover - the current setup steps still don't mention `docker compose up db -d` or the 5433 port.
