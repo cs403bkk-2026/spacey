@@ -499,9 +499,35 @@ def test_metrics_reports_spaces_bookings_and_members():
     assert response.get_json() == {
         "spaces": 2,
         "bookings": 2,
+        "paid_bookings": 0,
+        "unpaid_bookings": 2,
         "members": 2,
         "revenue_cents": 0,
     }
+
+def test_metrics_splits_paid_and_unpaid_bookings():
+    client = make_client()
+    first = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post("/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)})
+    client.post("/spaces/1/bookings", json={"member": "flurina", **slot(5, 6)})
+    client.post(f"/bookings/{first['id']}/pay")
+
+    body = client.get("/metrics").get_json()
+
+    assert body["bookings"] == 3
+    assert body["paid_bookings"] == 1
+    assert body["unpaid_bookings"] == 2
+
+def test_metrics_with_no_bookings_reports_zero_for_each_count():
+    client = make_client()
+
+    body = client.get("/metrics").get_json()
+
+    assert body["bookings"] == 0
+    assert body["paid_bookings"] == 0
+    assert body["unpaid_bookings"] == 0
 
 def test_metrics_reports_revenue_from_paid_bookings():
     client = make_client()
