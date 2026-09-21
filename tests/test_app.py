@@ -669,6 +669,33 @@ def test_dashboard_shows_current_metrics():
     assert "Members: 1" in body
     assert "$15.00" in body
 
+def test_dashboard_shows_paid_and_unpaid_bookings_separately():
+    client = make_client()
+    first = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    second = client.post(
+        "/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)}
+    ).get_json()
+    client.post("/spaces/1/bookings", json={"member": "flurina", **slot(5, 6)})
+    client.post(f"/bookings/{first['id']}/pay")
+    client.post(f"/bookings/{second['id']}/pay")
+
+    body = client.get("/dashboard").get_data(as_text=True)
+
+    # two paid and one unpaid, so swapped labels would be caught
+    assert "Bookings: 3" in body
+    assert "Paid bookings: 2" in body
+    assert "Unpaid bookings: 1" in body
+
+def test_dashboard_with_no_bookings_shows_zero_paid_and_unpaid():
+    client = make_client()
+
+    body = client.get("/dashboard").get_data(as_text=True)
+
+    assert "Paid bookings: 0" in body
+    assert "Unpaid bookings: 0" in body
+
 def test_delete_unbooked_space_removes_it():
     client = make_client()
     created = client.post(
