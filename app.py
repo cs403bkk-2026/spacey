@@ -1,9 +1,9 @@
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import psycopg
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, request, url_for
 from markupsafe import escape
 from psycopg.errors import DeadlockDetected, ExclusionViolation
 from psycopg.rows import dict_row
@@ -79,6 +79,21 @@ def parse_time(value) -> datetime | None:
         return None
     if parsed.tzinfo is None:
         return None
+    return parsed
+
+
+LOCAL_TZ = timezone(timedelta(hours=7))  # Bangkok, no daylight saving
+
+
+def parse_form_time(value) -> datetime | None:
+    """The browser's datetime-local field sends no timezone (2026-09-25T09:00),
+    so times typed into the booking form are read as Bangkok time."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=LOCAL_TZ)
     return parsed
 
 
@@ -165,21 +180,45 @@ def create_app(
             )
             booked_ids = {row["space_id"] for row in cur.fetchall()}
 
+        def booking_form(space_id):
+            return f"""
+              <form method="post" action="/spaces/{space_id}/book">
+                <input name="member" placeholder="Your name" required>
+                <input type="datetime-local" name="start_time" required>
+                <input type="datetime-local" name="end_time" required>
+                <button type="submit">Book</button>
+              </form>
+            """
+
         items = "".join(
             f"""
             <li>
               {escape(row['name'])} - capacity {row['capacity']},
               ${row['price_cents'] / 100:.2f}
               - {"booked" if row['id'] in booked_ids else "available"}
+              {"" if row['id'] in booked_ids else booking_form(row['id'])}
             </li>
             """
             for row in rows
         )
+
+        # Set by the redirect after the form posts (see book_from_form)
+        message = ""
+        if request.args.get("booked"):
+            message = (
+                f"<p>Booked! Booking #{escape(request.args['booked'])} - "
+                f"not paid yet.</p>"
+            )
+        elif request.args.get("error"):
+            message = f"<p>Could not book: {escape(request.args['error'])}</p>"
+
         return f"""
         <html>
           <head><title>Spacey - Spaces</title></head>
           <body>
             <h1>Spacey</h1>
+            {message}
+            <p>Times are Bangkok time (UTC+7).</p>
             <ul>{items}</ul>
             <p><a href="/dashboard">View business metrics</a></p>
           </body>
@@ -338,43 +377,33 @@ def create_app(
 
         return jsonify(bookings=[booking_to_json(row) for row in rows])
 
-    @app.post("/spaces/<int:space_id>/bookings")
-    def create_booking(space_id):
+    def book_space(space_id, member, start_time, end_time, party_size):
+        """Shared by the JSON API and the HTML booking form.
+        Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT id, capacity FROM spaces WHERE id = %s", (space_id,)
             )
             space = cur.fetchone()
             if space is None:
-                return jsonify(error="space not found"), 404
+                return {"error": "space not found"}, 404
 
-            body = request.get_json(silent=True) or {}
-            member = body.get("member", "guest")
-            start_time = parse_time(body.get("start_time"))
-            end_time = parse_time(body.get("end_time"))
-            party_size = body.get("party_size", 1)
-
-            if start_time is None or end_time is None:
-                return jsonify(
-                    error="start_time and end_time are required "
-                    "(ISO 8601 with timezone)"
-                ), 400
             if end_time <= start_time:
-                return jsonify(error="end_time must be after start_time"), 400
+                return {"error": "end_time must be after start_time"}, 400
             # bool is a subclass of int in Python, so rule out true/false
             if (
                 not isinstance(party_size, int)
                 or isinstance(party_size, bool)
                 or party_size < 1
             ):
-                return jsonify(
-                    error="party_size must be a whole number of at least 1"
-                ), 400
+                return {
+                    "error": "party_size must be a whole number of at least 1"
+                }, 400
             if party_size > space["capacity"]:
-                return jsonify(
-                    error=f"party_size {party_size} exceeds this space's "
+                return {
+                    "error": f"party_size {party_size} exceeds this space's "
                     f"capacity of {space['capacity']}"
-                ), 400
+                }, 400
 
             # Overlap = starts before the other ends AND ends after the
             # other starts. Back-to-back bookings (10-11, 11-12) are allowed.
@@ -384,9 +413,7 @@ def create_app(
                 (space_id, end_time, start_time),
             )
             if cur.fetchone() is not None:
-                return jsonify(
-                    error="space is already booked for that time"
-                ), 409
+                return {"error": "space is already booked for that time"}, 409
 
             try:
                 cur.execute(
@@ -400,12 +427,48 @@ def create_app(
             except (DeadlockDetected, ExclusionViolation):
                 # The pre-check above already caught this in the common
                 # case; this only fires when two requests raced past it.
-                return jsonify(
-                    error="space is already booked for that time"
-                ), 409
+                return {"error": "space is already booked for that time"}, 409
             row = cur.fetchone()
 
-        return jsonify(booking_to_json(row)), 201
+        return booking_to_json(row), 201
+
+    @app.post("/spaces/<int:space_id>/bookings")
+    def create_booking(space_id):
+        body = request.get_json(silent=True) or {}
+        start_time = parse_time(body.get("start_time"))
+        end_time = parse_time(body.get("end_time"))
+
+        if start_time is None or end_time is None:
+            return jsonify(
+                error="start_time and end_time are required "
+                "(ISO 8601 with timezone)"
+            ), 400
+
+        payload, status = book_space(
+            space_id,
+            body.get("member", "guest"),
+            start_time,
+            end_time,
+            body.get("party_size", 1),
+        )
+        return jsonify(payload), status
+
+    @app.post("/spaces/<int:space_id>/book")
+    def book_from_form(space_id):
+        """The homepage form posts here, then we send the browser back to
+        the space list - with a message, since a form can't read JSON."""
+        member = request.form.get("member", "").strip() or "guest"
+        start_time = parse_form_time(request.form.get("start_time"))
+        end_time = parse_form_time(request.form.get("end_time"))
+
+        if start_time is None or end_time is None:
+            return redirect(url_for("index", error="fill in a start and end time"))
+
+        payload, status = book_space(space_id, member, start_time, end_time, 1)
+        if status >= 400:
+            return redirect(url_for("index", error=payload["error"]))
+
+        return redirect(url_for("index", booked=payload["id"]))
 
     @app.get("/bookings")
     def list_bookings():
