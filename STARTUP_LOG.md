@@ -930,3 +930,31 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: Annabel to confirm the amount-0 decision, and whether subscriptions need a price and a cancel next.
 - Action: a way to subscribe from the browser (new issue).
+#### Part 8: Let PATCH change a space's price (issue #105)
+
+**People and contributions**
+- Annabel (business owner) picked #105 and assigned it to Flurina, who implemented it.
+
+**Progress and evidence**
+- `PATCH /spaces/<id>` now also accepts `price_cents`; only the fields sent are changed. A booking made before a price change keeps the amount it was charged (revenue in `/metrics` doesn't move) and a booking made after is charged the new price. This is the test #78 originally asked for, now possible through the API.
+- `pytest -q tests`: 79 passed, 5 runs in a row (75 existing, 4 new, 1 extended). Four of the tests fail on main's `app.py`.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/107
+
+**Decisions and reasons**
+- Followed #78 because a price can now be changed without rewriting past revenue.
+- The price is checked with one shared rule for POST and PATCH (whole number, 0 or more, not true/false) instead of copying the old POST check.
+- The error for an empty PATCH now reads "provide name, capacity and/or price_cents to update".
+
+**Attempts and problems**
+- Checking "the same rule as POST" against the real code turned up a bug: `POST /spaces` with `"price_cents": true` returned a 500. Python counts true as the number 1, so it got past the check and Postgres then refused it. Fixed by using the shared rule for POST too, with a test.
+
+**Shortcuts and unfinished work**
+- Anyone can change any price; there is no login or ownership check (#48, #86).
+- No price history is kept, only the amount on each booking (#78).
+
+**Help and tools**
+- Used Claude Code to draft the change in `app.py` and the tests in `test_app.py`. I read the diff, checked the new tests fail on main's `app.py`, and re-ran the suite 5 times before pushing. Trying the "same rule as POST" wording against the real code with Claude Code is what turned up the `true` price bug.
+
+**Next steps**
+- Action: #106 (show the amount on the booking) once Gregory's confirmation page (#100) is merged.
+- Action: Annabel to decide what counts as "in the past" for #102, and to prioritise #101 (subscriptions).
