@@ -82,6 +82,40 @@ def parse_time(value) -> datetime | None:
     return parsed
 
 
+def parse_window(args) -> tuple[tuple | None, str | None]:
+    """Optional ?start_time=&end_time= as (window, error); window is None if absent."""
+    raw_start, raw_end = args.get("start_time"), args.get("end_time")
+    if raw_start is None and raw_end is None:
+        return None, None
+    start_time, end_time = parse_time(raw_start), parse_time(raw_end)
+    if start_time is None or end_time is None:
+        return None, (
+            "start_time and end_time must be given together "
+            "(ISO 8601 with timezone, e.g. 2026-09-25T09:00:00Z)"
+        )
+    if end_time <= start_time:
+        return None, "end_time must be after start_time"
+    return (start_time, end_time), None
+
+
+def booked_space_ids(cur, window) -> set:
+    """Spaces booked during the window, or booked right now if no window."""
+    if window is None:
+        cur.execute(
+            "SELECT DISTINCT space_id FROM bookings "
+            "WHERE start_time <= now() AND end_time > now()"
+        )
+    else:
+        start_time, end_time = window
+        # Same overlap rule as booking creation: back-to-back is not a clash.
+        cur.execute(
+            "SELECT DISTINCT space_id FROM bookings "
+            "WHERE start_time < %s AND end_time > %s",
+            (end_time, start_time),
+        )
+    return {row["space_id"] for row in cur.fetchall()}
+
+
 LOCAL_TZ = timezone(timedelta(hours=7))  # Bangkok, no daylight saving
 
 
@@ -247,14 +281,14 @@ def create_app(
 
     @app.get("/spaces")
     def list_spaces():
+        window, error = parse_window(request.args)
+        if error:
+            return jsonify(error=error), 400
+
         with app.db.cursor() as cur:
             cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
             rows = cur.fetchall()
-            cur.execute(
-                "SELECT DISTINCT space_id FROM bookings "
-                "WHERE start_time <= now() AND end_time > now()"
-            )
-            booked_ids = {row["space_id"] for row in cur.fetchall()}
+            booked_ids = booked_space_ids(cur, window)
 
         spaces = [
             {**row, "available": row["id"] not in booked_ids} for row in rows
@@ -294,6 +328,10 @@ def create_app(
 
     @app.get("/spaces/<int:space_id>")
     def get_space(space_id):
+        window, error = parse_window(request.args)
+        if error:
+            return jsonify(error=error), 400
+
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT id, name, capacity, price_cents FROM spaces WHERE id = %s",
@@ -303,12 +341,7 @@ def create_app(
             if space is None:
                 return jsonify(error="space not found"), 404
 
-            cur.execute(
-                "SELECT 1 FROM bookings "
-                "WHERE space_id = %s AND start_time <= now() AND end_time > now()",
-                (space_id,),
-            )
-            booked = cur.fetchone() is not None
+            booked = space_id in booked_space_ids(cur, window)
 
         return jsonify({**space, "available": not booked})
 

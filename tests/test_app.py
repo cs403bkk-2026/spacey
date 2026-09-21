@@ -637,6 +637,76 @@ def test_get_unknown_space_returns_404():
     assert response.status_code == 404
     assert response.get_json() == {"error": "space not found"}
 
+def test_list_spaces_for_a_time_window_reflects_bookings_in_that_window():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(48, 50)})
+
+    # free right now, so the default view says available
+    assert client.get("/spaces").get_json()["spaces"][0]["available"] is True
+
+    clash = client.get("/spaces", query_string=slot(47, 49)).get_json()
+    free = client.get("/spaces", query_string=slot(60, 61)).get_json()
+
+    assert clash["spaces"][0]["available"] is False
+    assert free["spaces"][0]["available"] is True
+
+def test_availability_window_replaces_the_right_now_check():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+
+    assert client.get("/spaces").get_json()["spaces"][0]["available"] is False
+
+    later = client.get("/spaces", query_string=slot(5, 6)).get_json()
+
+    assert later["spaces"][0]["available"] is True
+
+def test_availability_window_touching_a_booking_is_still_free():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)})
+
+    # starts exactly when the first booking ends
+    after = client.get("/spaces", query_string=slot(1, 2)).get_json()
+    # ends exactly when the second booking starts
+    before = client.get("/spaces", query_string=slot(2, 3)).get_json()
+
+    assert after["spaces"][0]["available"] is True
+    assert before["spaces"][0]["available"] is True
+
+def test_get_space_for_a_time_window_reflects_bookings_in_that_window():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(48, 50)})
+
+    clash = client.get("/spaces/1", query_string=slot(49, 51))
+    free = client.get("/spaces/1", query_string=slot(60, 61))
+
+    assert clash.status_code == 200
+    assert clash.get_json()["available"] is False
+    assert free.get_json()["available"] is True
+
+def test_availability_window_must_have_both_times_in_order():
+    client = make_client()
+    together = (
+        "start_time and end_time must be given together "
+        "(ISO 8601 with timezone, e.g. 2026-09-25T09:00:00Z)"
+    )
+    bad_windows = [
+        ({"start_time": slot(1, 2)["start_time"]}, together),
+        ({"start_time": "tomorrow", "end_time": "later"}, together),
+        (
+            {"start_time": "2026-09-25T09:00:00", "end_time": "2026-09-25T10:00:00"},
+            together,  # no timezone
+        ),
+        (slot(2, 1), "end_time must be after start_time"),
+    ]
+
+    for path in ["/spaces", "/spaces/1"]:
+        for query, message in bad_windows:
+            response = client.get(path, query_string=query)
+
+            assert response.status_code == 400
+            assert response.get_json() == {"error": message}
+
 def test_list_bookings_for_a_space_returns_all_of_them():
     client = make_client()
     client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
