@@ -553,19 +553,32 @@ def create_app(
 
     @app.post("/bookings/<int:booking_id>/pay")
     def pay_booking(booking_id):
-        # Mocked payment: no real provider, it always succeeds. Paying an
-        # already-paid booking is a no-op rather than an error, so a
-        # retried request can't break the flow.
+        # Mocked payment: no real provider, so it succeeds unless the request
+        # body has {"force_failure": true} - that lets us show and test the
+        # failure path. Paying an already-paid booking is a no-op rather than
+        # an error, so a retried request can't break the flow or charge twice.
+        body = request.get_json(silent=True)
+        force_failure = isinstance(body, dict) and body.get("force_failure") is True
+
         with app.db.cursor() as cur:
             cur.execute(
-                "UPDATE bookings SET paid = TRUE WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time",
+                "SELECT id, space_id, member, paid, start_time, end_time "
+                "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
             row = cur.fetchone()
+            if row is None:
+                return jsonify(error="booking not found"), 404
 
-        if row is None:
-            return jsonify(error="booking not found"), 404
+            if not row["paid"]:
+                if force_failure:
+                    return jsonify(error="payment failed"), 402
+                cur.execute(
+                    "UPDATE bookings SET paid = TRUE WHERE id = %s "
+                    "RETURNING id, space_id, member, paid, start_time, end_time",
+                    (booking_id,),
+                )
+                row = cur.fetchone()
 
         return jsonify(booking_to_json(row))
 
