@@ -46,6 +46,16 @@ def get_connection(database_url: str) -> psycopg.Connection:
             "ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ, "
             "ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ"
         )
+        # Price charged at booking time, so a later price change can't rewrite past revenue.
+        cur.execute(
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount_cents INTEGER"
+        )
+        # Bookings from before that column existed get the space's current price (best we have).
+        cur.execute(
+            "UPDATE bookings SET amount_cents = s.price_cents "
+            "FROM spaces s "
+            "WHERE s.id = bookings.space_id AND bookings.amount_cents IS NULL"
+        )
         # Belt-and-suspenders against double-booking: the app already checks
         # for overlaps before inserting, but that check-then-insert isn't
         # atomic, so two simultaneous requests could both pass the check.
@@ -167,9 +177,7 @@ def compute_metrics(cur) -> dict:
     total_members = cur.fetchone()["count"]
 
     cur.execute(
-        "SELECT COALESCE(SUM(s.price_cents), 0) AS total "
-        "FROM bookings b JOIN spaces s ON s.id = b.space_id "
-        "WHERE b.paid"
+        "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM bookings WHERE paid"
     )
     revenue_cents = cur.fetchone()["total"]
 
@@ -422,7 +430,8 @@ def create_app(
         Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, capacity FROM spaces WHERE id = %s", (space_id,)
+                "SELECT id, capacity, price_cents FROM spaces WHERE id = %s",
+                (space_id,),
             )
             space = cur.fetchone()
             if space is None:
@@ -458,11 +467,18 @@ def create_app(
             try:
                 cur.execute(
                     "INSERT INTO bookings "
-                    "(space_id, member, paid, start_time, end_time) "
-                    "VALUES (%s, %s, %s, %s, %s) "
+                    "(space_id, member, paid, start_time, end_time, amount_cents) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) "
                     "RETURNING id, space_id, member, paid, start_time, end_time",
                     # unpaid until POST /bookings/<id>/pay is called
-                    (space_id, member, False, start_time, end_time),
+                    (
+                        space_id,
+                        member,
+                        False,
+                        start_time,
+                        end_time,
+                        space["price_cents"],
+                    ),
                 )
             except (DeadlockDetected, ExclusionViolation):
                 # The pre-check above already caught this in the common
