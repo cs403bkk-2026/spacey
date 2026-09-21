@@ -154,6 +154,10 @@ def is_valid_capacity(capacity) -> bool:
     )
 
 
+def is_valid_price(price) -> bool:
+    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
+
+
 def booking_to_json(row: dict) -> dict:
     return {
         **row,
@@ -319,7 +323,7 @@ def create_app(
                 error="capacity must be a whole number of at least 1"
             ), 400
         name = name.strip()
-        if not isinstance(price_cents, int) or price_cents < 0:
+        if not is_valid_price(price_cents):
             return jsonify(
                 error="price_cents must be a non-negative integer"
             ), 400
@@ -356,8 +360,10 @@ def create_app(
     @app.patch("/spaces/<int:space_id>")
     def update_space(space_id):
         body = request.get_json(silent=True) or {}
-        if "name" not in body and "capacity" not in body:
-            return jsonify(error="provide name and/or capacity to update"), 400
+        if not any(field in body for field in ("name", "capacity", "price_cents")):
+            return jsonify(
+                error="provide name, capacity and/or price_cents to update"
+            ), 400
 
         with app.db.cursor() as cur:
             cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
@@ -366,11 +372,16 @@ def create_app(
 
             name = body.get("name")
             capacity = body.get("capacity")
+            price_cents = body.get("price_cents")
             if "name" in body and not is_valid_name(name):
                 return jsonify(error="name must not be empty"), 400
             if "capacity" in body and not is_valid_capacity(capacity):
                 return jsonify(
                     error="capacity must be a whole number of at least 1"
+                ), 400
+            if "price_cents" in body and not is_valid_price(price_cents):
+                return jsonify(
+                    error="price_cents must be a non-negative integer"
                 ), 400
             if name is not None:
                 name = name.strip()
@@ -379,10 +390,11 @@ def create_app(
             cur.execute(
                 "UPDATE spaces "
                 "SET name = COALESCE(%s, name), "
-                "capacity = COALESCE(%s, capacity) "
+                "capacity = COALESCE(%s, capacity), "
+                "price_cents = COALESCE(%s, price_cents) "
                 "WHERE id = %s "
                 "RETURNING id, name, capacity, price_cents",
-                (name, capacity, space_id),
+                (name, capacity, price_cents, space_id),
             )
             space = cur.fetchone()
 
