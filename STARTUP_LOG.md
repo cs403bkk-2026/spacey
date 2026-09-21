@@ -663,30 +663,6 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Whoever's free next: pick up #65 (booking form), now that #49 unblocks it.
 
-#### Part 2: Navigation links (issue #73)
-
-**People and contributions**
-- Picked #73 specifically because it's isolated from Gregory's in-progress work on #74 (unpaid bookings/pay endpoint) - zero overlap zero conflict risk. Flurina implemented it.
-
-**Progress and evidence**
-- Added a link from / to /dashboard, and back.
-- Verified with pytest, including two new tests confirming each link renders.
-- PR: https://github.com/cs403bkk-2026/spacey/pull/79
-
-**Decisions and reasons**
-- Kept it to a plain text link, no nav bar - matches Maksym's guidance to keep the UI basic and functional for now, not polished.
-
-**Attempts and problems**
-- None - small, isolated change.
-
-**Shortcuts and unfinished work**
-- Still no real navigation (header/menu) - just two links. Fine for now given the "basic UI" guidance.
-
-**Help and tools**
-- Used Claude to help implement and test the change. Ran the tests ourselves before merging.
-
-**Next steps**
-- Once #74 merges, pick up #75 (Pay button) next.
 ## 2026-09-20 - Day 7
 
 #### Part 1: Bookings start unpaid, mocked pay endpoint (issue #74)
@@ -716,3 +692,59 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: #75 (Pay button in the UI), now that the endpoint exists. Owner: Annabel and Gregory
+
+#### Part 2: Navigation links (issue #73)
+
+**People and contributions**
+- Picked #73 specifically because it's isolated from Gregory's in-progress work on #74 (unpaid bookings/pay endpoint) - zero overlap zero conflict risk. Flurina implemented it.
+
+**Progress and evidence**
+- Added a link from / to /dashboard, and back.
+- Verified with pytest, including two new tests confirming each link renders.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/79
+
+**Decisions and reasons**
+- Kept it to a plain text link, no nav bar - matches Maksym's guidance to keep the UI basic and functional for now, not polished.
+
+**Attempts and problems**
+- None - small, isolated change.
+
+**Shortcuts and unfinished work**
+- Still no real navigation (header/menu) - just two links. Fine for now given the "basic UI" guidance.
+
+**Help and tools**
+- Used Claude to help implement and test the change. Ran the tests ourselves before merging.
+
+**Next steps**
+- Once #74 merges, pick up #75 (Pay button) next.
+
+## 2026-09-21 - Day 8
+
+#### Part 1: Split paid and unpaid bookings in /metrics (issue #85)
+
+**People and contributions**
+- Flurina picked #85 and implemented it.
+
+**Progress and evidence**
+- `/metrics` now also returns `paid_bookings` and `unpaid_bookings`; `bookings` stays as the total.
+- `pytest -q tests`: 56 passed, 5 runs in a row (54 existing, 2 new, 1 updated for the new keys). The metrics tests fail on main and pass with the change.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/88
+
+**Decisions and reasons**
+- Picked #85 because since #74 the single bookings number is ambiguous, and the metrics dashboard is due Tuesday. It also touches only compute_metrics, so no overlap with Annabel's booking form work (#65, branch `add_booking_form` is still empty).
+- Left out #78 for now: it says PATCH /spaces can change a price, but PATCH only updates name and capacity, so that bug can't be triggered through the API yet. Needs a decision first: should PATCH support price?
+- #84 (paying twice) looks already true by design: revenue counts the `paid` flag, so paying twice can't count twice. Only a test is missing.
+
+**Attempts and problems**
+- None for the code itself.
+
+**Shortcuts and unfinished work**
+- `/dashboard` still shows only the total, not the split.
+- Flaky concurrency test from Part 3 (Day 6) not fixed yet; it didn't fail in 5 runs today.
+
+**Help and tools**
+- Used Claude Code to implement it. I reviewed everything and ran the tests before pushing.
+
+**Next steps**
+- Action: decide whether PATCH /spaces should support price_cents, so #78 can go ahead. Owner: Annabel (business owner).
+- Action: #84 only needs a test that revenue goes up once. Owner: whoever is free.
