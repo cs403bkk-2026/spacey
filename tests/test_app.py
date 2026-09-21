@@ -453,6 +453,91 @@ def test_pay_unknown_booking_returns_404():
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
 
+def test_failed_payment_leaves_the_booking_unpaid_and_unlock_returns_402():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
+    ).get_json()
+
+    response = client.post(
+        f"/bookings/{created['id']}/pay", json={"force_failure": True}
+    )
+
+    assert response.status_code == 402
+    assert response.get_json() == {"error": "payment failed"}
+    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
+
+    unlock = client.post(f"/bookings/{created['id']}/unlock")
+    assert unlock.status_code == 402
+    assert unlock.get_json() == {"error": "booking is not paid"}
+
+def test_failed_payment_brings_in_no_revenue_and_can_be_retried():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    booking = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
+
+    client.post(f"/bookings/{booking['id']}/pay", json={"force_failure": True})
+    after_failure = client.get("/metrics").get_json()
+
+    assert after_failure["revenue_cents"] == 0
+    assert after_failure["unpaid_bookings"] == 1
+
+    retry = client.post(
+        f"/bookings/{booking['id']}/pay", json={"force_failure": False}
+    )
+    after_retry = client.get("/metrics").get_json()
+
+    assert retry.status_code == 200
+    assert retry.get_json()["paid"] is True
+    assert after_retry["revenue_cents"] == 1500
+    assert after_retry["paid_bookings"] == 1
+
+def test_forcing_a_failure_on_an_unknown_booking_returns_404():
+    client = make_client()
+
+    response = client.post("/bookings/999/pay", json={"force_failure": True})
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "booking not found"}
+
+def test_forcing_a_failure_on_a_paid_booking_leaves_it_paid():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay")
+
+    response = client.post(
+        f"/bookings/{created['id']}/pay", json={"force_failure": True}
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["paid"] is True
+
+def test_paying_twice_only_counts_revenue_once():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+    booking = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
+    ).get_json()
+
+    first = client.post(f"/bookings/{booking['id']}/pay")
+    second = client.post(f"/bookings/{booking['id']}/pay")
+    metrics = client.get("/metrics").get_json()
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert metrics["revenue_cents"] == 1500
+    assert metrics["paid_bookings"] == 1
+
 def test_unlock_before_paying_is_rejected():
     client = make_client()
     created = client.post(
