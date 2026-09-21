@@ -636,8 +636,6 @@ def create_app(
         """Mocked payment: no provider, always succeeds. Paying an
         already-paid booking is a no-op rather than an error, so a retried
         request can't break the flow. Returns the booking, or None."""
-    @app.post("/bookings/<int:booking_id>/pay")
-    def pay_booking(booking_id):
         # Mocked payment: no real provider, so it succeeds unless the request
         # body has {"force_failure": true} - that lets us show and test the
         # failure path. Paying an already-paid booking is a no-op rather than
@@ -651,14 +649,13 @@ def create_app(
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
-            return cur.fetchone()
             row = cur.fetchone()
             if row is None:
-                return jsonify(error="booking not found"), 404
+                return None
 
             if not row["paid"]:
                 if force_failure:
-                    return jsonify(error="payment failed"), 402
+                    return {"error": "payment failed"}, 402
                 cur.execute(
                     "UPDATE bookings SET paid = TRUE WHERE id = %s "
                     "RETURNING id, space_id, member, paid, start_time, end_time",
@@ -666,7 +663,7 @@ def create_app(
                 )
                 row = cur.fetchone()
 
-        return jsonify(booking_to_json(row))
+        return row
 
     def issue_access_code(booking_id):
         """Shared by the JSON API and the Unlock button.
@@ -688,6 +685,9 @@ def create_app(
     @app.post("/bookings/<int:booking_id>/pay")
     def pay_booking(booking_id):
         row = mark_booking_paid(booking_id)
+        if isinstance(row, tuple):
+            payload, status = row
+            return jsonify(payload), status
         if row is None:
             return jsonify(error="booking not found"), 404
 
