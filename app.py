@@ -39,6 +39,16 @@ def get_connection(database_url: str) -> psycopg.Connection:
             )
             """
         )
+        # Mocked subscriptions, keyed by the trimmed lower-case member name.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                member TEXT PRIMARY KEY,
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                started_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
         # Added after the table already existed, so ALTER instead of editing
         # CREATE TABLE above - existing databases get the new columns too.
         cur.execute(
@@ -158,6 +168,20 @@ def is_valid_price(price) -> bool:
     return isinstance(price, int) and not isinstance(price, bool) and price >= 0
 
 
+def member_key(name: str) -> str:
+    return name.strip().lower()
+
+
+def is_subscribed(cur, member) -> bool:
+    if not isinstance(member, str):
+        return False
+    cur.execute(
+        "SELECT 1 FROM subscriptions WHERE member = %s AND active",
+        (member_key(member),),
+    )
+    return cur.fetchone() is not None
+
+
 def local_time(value: datetime) -> str:
     """For the HTML pages: Bangkok time, no seconds or offset clutter."""
     return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
@@ -204,7 +228,9 @@ def reset_tables(conn: psycopg.Connection) -> None:
     local reset (RESET_DB_ON_START=true) - off by default, so a real
     deployment's data survives an app restart."""
     with conn.cursor() as cur:
-        cur.execute("TRUNCATE bookings, spaces RESTART IDENTITY CASCADE")
+        cur.execute(
+            "TRUNCATE bookings, spaces, subscriptions RESTART IDENTITY CASCADE"
+        )
 
 def seed_starter_space(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
@@ -477,20 +503,22 @@ def create_app(
             if cur.fetchone() is not None:
                 return {"error": "space is already booked for that time"}, 409
 
+            # Unpaid until POST /bookings/<id>/pay is called - unless the
+            # member subscribes: then it is paid at once and costs nothing extra.
+            subscribed = is_subscribed(cur, member)
             try:
                 cur.execute(
                     "INSERT INTO bookings "
                     "(space_id, member, paid, start_time, end_time, amount_cents) "
                     "VALUES (%s, %s, %s, %s, %s, %s) "
                     "RETURNING id, space_id, member, paid, start_time, end_time",
-                    # unpaid until POST /bookings/<id>/pay is called
                     (
                         space_id,
                         member,
-                        False,
+                        subscribed,
                         start_time,
                         end_time,
-                        space["price_cents"],
+                        0 if subscribed else space["price_cents"],
                     ),
                 )
             except (DeadlockDetected, ExclusionViolation):
@@ -725,6 +753,29 @@ def create_app(
     def unlock_booking(booking_id):
         payload, status = issue_access_code(booking_id)
         return jsonify(payload), status
+
+    @app.post("/members/<name>/subscribe")
+    def subscribe_member(name):
+        # Mocked, like payment: no provider, always succeeds. Subscribing
+        # again is a no-op, so a retried request can't break anything.
+        member = member_key(name)
+        if not member:
+            return jsonify(error="member name must not be blank"), 400
+
+        with app.db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO subscriptions (member) VALUES (%s) "
+                "ON CONFLICT (member) DO UPDATE SET active = TRUE "
+                "RETURNING member, active, started_at",
+                (member,),
+            )
+            row = cur.fetchone()
+
+        return jsonify(
+            member=row["member"],
+            active=row["active"],
+            started_at=row["started_at"].astimezone(timezone.utc).isoformat(),
+        )
 
     @app.get("/metrics")
     def metrics():
