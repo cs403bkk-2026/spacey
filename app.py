@@ -82,6 +82,40 @@ def parse_time(value) -> datetime | None:
     return parsed
 
 
+def parse_window(args) -> tuple[tuple | None, str | None]:
+    """Optional ?start_time=&end_time= as (window, error); window is None if absent."""
+    raw_start, raw_end = args.get("start_time"), args.get("end_time")
+    if raw_start is None and raw_end is None:
+        return None, None
+    start_time, end_time = parse_time(raw_start), parse_time(raw_end)
+    if start_time is None or end_time is None:
+        return None, (
+            "start_time and end_time must be given together "
+            "(ISO 8601 with timezone, e.g. 2026-09-25T09:00:00Z)"
+        )
+    if end_time <= start_time:
+        return None, "end_time must be after start_time"
+    return (start_time, end_time), None
+
+
+def booked_space_ids(cur, window) -> set:
+    """Spaces booked during the window, or booked right now if no window."""
+    if window is None:
+        cur.execute(
+            "SELECT DISTINCT space_id FROM bookings "
+            "WHERE start_time <= now() AND end_time > now()"
+        )
+    else:
+        start_time, end_time = window
+        # Same overlap rule as booking creation: back-to-back is not a clash.
+        cur.execute(
+            "SELECT DISTINCT space_id FROM bookings "
+            "WHERE start_time < %s AND end_time > %s",
+            (end_time, start_time),
+        )
+    return {row["space_id"] for row in cur.fetchall()}
+
+
 LOCAL_TZ = timezone(timedelta(hours=7))  # Bangkok, no daylight saving
 
 
@@ -248,14 +282,14 @@ def create_app(
 
     @app.get("/spaces")
     def list_spaces():
+        window, error = parse_window(request.args)
+        if error:
+            return jsonify(error=error), 400
+
         with app.db.cursor() as cur:
             cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
             rows = cur.fetchall()
-            cur.execute(
-                "SELECT DISTINCT space_id FROM bookings "
-                "WHERE start_time <= now() AND end_time > now()"
-            )
-            booked_ids = {row["space_id"] for row in cur.fetchall()}
+            booked_ids = booked_space_ids(cur, window)
 
         spaces = [
             {**row, "available": row["id"] not in booked_ids} for row in rows
@@ -295,6 +329,10 @@ def create_app(
 
     @app.get("/spaces/<int:space_id>")
     def get_space(space_id):
+        window, error = parse_window(request.args)
+        if error:
+            return jsonify(error=error), 400
+
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT id, name, capacity, price_cents FROM spaces WHERE id = %s",
@@ -304,12 +342,7 @@ def create_app(
             if space is None:
                 return jsonify(error="space not found"), 404
 
-            cur.execute(
-                "SELECT 1 FROM bookings "
-                "WHERE space_id = %s AND start_time <= now() AND end_time > now()",
-                (space_id,),
-            )
-            booked = cur.fetchone() is not None
+            booked = space_id in booked_space_ids(cur, window)
 
         return jsonify({**space, "available": not booked})
 
@@ -603,13 +636,37 @@ def create_app(
         """Mocked payment: no provider, always succeeds. Paying an
         already-paid booking is a no-op rather than an error, so a retried
         request can't break the flow. Returns the booking, or None."""
+    @app.post("/bookings/<int:booking_id>/pay")
+    def pay_booking(booking_id):
+        # Mocked payment: no real provider, so it succeeds unless the request
+        # body has {"force_failure": true} - that lets us show and test the
+        # failure path. Paying an already-paid booking is a no-op rather than
+        # an error, so a retried request can't break the flow or charge twice.
+        body = request.get_json(silent=True)
+        force_failure = isinstance(body, dict) and body.get("force_failure") is True
+
         with app.db.cursor() as cur:
             cur.execute(
-                "UPDATE bookings SET paid = TRUE WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time",
+                "SELECT id, space_id, member, paid, start_time, end_time "
+                "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
             return cur.fetchone()
+            row = cur.fetchone()
+            if row is None:
+                return jsonify(error="booking not found"), 404
+
+            if not row["paid"]:
+                if force_failure:
+                    return jsonify(error="payment failed"), 402
+                cur.execute(
+                    "UPDATE bookings SET paid = TRUE WHERE id = %s "
+                    "RETURNING id, space_id, member, paid, start_time, end_time",
+                    (booking_id,),
+                )
+                row = cur.fetchone()
+
+        return jsonify(booking_to_json(row))
 
     def issue_access_code(booking_id):
         """Shared by the JSON API and the Unlock button.
@@ -662,6 +719,8 @@ def create_app(
             <ul>
               <li>Spaces: {data['spaces']}</li>
               <li>Bookings: {data['bookings']}</li>
+              <li>Paid bookings: {data['paid_bookings']}</li>
+              <li>Unpaid bookings: {data['unpaid_bookings']}</li>
               <li>Members: {data['members']}</li>
               <li>Revenue: {revenue_display}</li>
             </ul>

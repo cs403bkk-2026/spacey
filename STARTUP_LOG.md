@@ -782,3 +782,90 @@ copy-pasting the same four queries into a second route.
 - Action: #46 (README) before the handover - the current setup steps still don't mention `docker compose up db -d` or the 5433 port.
 - Action: decide whether PATCH /spaces should support price_cents, so #78 can go ahead. Owner: Annabel (business owner).
 - Action: #84 only needs a test that revenue goes up once. Owner: whoever is free.
+
+#### Part 3: Availability for a requested time window (issue #56)
+
+**People and contributions**
+- Annabel picked #56 and told Flurina to implemented it.
+
+**Progress and evidence**
+- `GET /spaces` and `GET /spaces/<id>` accept optional `?start_time=&end_time=`. With them, `available` means free for that whole window (same overlap rule as booking creation, back-to-back is fine); without them it still means "right now".
+- `pytest -q tests`: 66 passed, 5 runs in a row (61 existing, 5 new).
+- PR: https://github.com/cs403bkk-2026/spacey/pull/92
+
+**Decisions and reasons**
+- Picked #56 because it answers the core question of the product ("is this free next Tuesday 2-4pm?") and only touches the spaces endpoints, so no overlap with Annabel's booking form work.
+- Left out #66/#75 (confirmation page, Pay/Unlock buttons) on purpose: the Day 7 log names Annabel and Gregory as owners and we couldn't see whether they had started.
+- Both params are required together, with a timezone; otherwise a 400 that says why. The response shape did not change.
+
+**Attempts and problems**
+- One of my new tests (the back-to-back boundary) also passed on the old code, so it proved nothing. Fixed it by booking the space right now, which makes the old code fail.
+- A literal `+` in a query string becomes a space, so `+07:00` gives a 400. Use `Z` or `%2B`. The error message now suggests `Z`.
+
+**Shortcuts and unfinished work**
+- The homepage still shows availability for "right now" and the booking form doesn't use the window yet.
+- No timezone default for the query params.
+
+**Help and tools**
+- Used Claude Code to implement app.py and test_app.py. I checked that the new tests fail with `app.py` reverted to main, re-ran the suite 5 times and reviewed the diff.
+
+**Next steps**
+- Action: tell Annabel and Gregory that #56 is done, and check who takes #66/#75 (confirmation page, Pay, Unlock). Owner: Flurina.
+- Action: decide whether the homepage should show availability for the time slot a person types into the form. Owner: Annabel (business owner).
+
+#### Part 4: Let the mocked payment fail (issues #83, #84)
+
+**People and contributions**
+- Annabel (business owner) picked #83 and assigned it to Flurina, who implemented it. #84 turned out to be covered by the same endpoint, so it was closed with it.
+
+**Progress and evidence**
+- `POST /bookings/<id>/pay` now takes an optional `{"force_failure": true}`. It returns 402 "payment failed" and the booking stays unpaid, so unlock returns 402 and no revenue is counted. Without the flag (or with `false`) nothing changes, and an already paid booking stays paid.
+- #84: a new test pays the same booking twice and checks `revenue_cents` only went up once. This already worked because revenue counts the `paid` flag, so no code was needed for it.
+- `pytest -q tests`: 71 passed, 5 runs in a row (66 existing, 5 new). The two failure-path tests fail on main's `app.py`; the other three pin behaviour that must not change.
+- PR: <PR LINK>
+
+**Decisions and reasons**
+- Failure is opt-in through the request body, as #83 suggested, so the normal flow and the coming Pay button (#75) don't have to change.
+- Used 402 like the unlock endpoint already does for an unpaid booking.
+- A failed attempt is not stored anywhere (it is a mock); the booking just stays unpaid so it can be retried.
+
+**Attempts and problems**
+- #83 still says `create_booking` inserts `paid=True`, which was true before #74. We put the failure on the pay endpoint instead.
+- Correction to Part 1: I wrote there that the flaky concurrency test was "not fixed yet". It already was (a deadlock now returns 409). The test passed 40 runs in a row on main.
+
+**Shortcuts and unfinished work**
+- There is no Pay button yet (#75), so the failure can only be triggered through the API, not the browser.
+- Payment is still a mock: no provider, no amount charged.
+
+**Help and tools**
+- Used Claude Code to draft the change in `app.py` and the tests in `test_app.py`. I read the diff, checked that the failure tests fail on main's `app.py`, and re-ran the suite 5 times before pushing.
+
+**Next steps**
+- Action: #66 (confirmation page) and #75 (Pay button); the Pay button should show the "payment failed" message. Owner: Annabel and Gregory.
+
+#### Part 5: Paid and unpaid bookings on the dashboard (issue #96)
+
+**People and contributions**
+- Annabel (business owner) picked #96 and assigned it to Flurina, who implemented it.
+
+**Progress and evidence**
+- `/dashboard` now shows "Paid bookings" and "Unpaid bookings" under the Bookings total, using the values `compute_metrics` has returned since #85.
+- `pytest -q tests`: 73 passed, 5 runs in a row (71 existing, 2 new). Both new tests fail on main's `app.py`.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/98
+
+**Decisions and reasons**
+- Did this straight after #85 because the dashboard is due Tuesday and its single Bookings number was still ambiguous now that bookings start unpaid.
+- The main test uses two paid and one unpaid booking, so swapped labels would be caught.
+
+**Attempts and problems**
+- None.
+
+**Shortcuts and unfinished work**
+- Still plain HTML with a handful of numbers, no styling or charts, in line with the "keep the UI basic" guidance.
+- Revenue is still worked out from the space's current price (#78).
+
+**Help and tools**
+- Used Claude Code to make the two-line change and write the tests. I read the diff, checked the new tests fail on main's `app.py`, and re-ran the suite 5 times before pushing.
+
+**Next steps**
+- Action: the confirmation page with Pay and Unlock buttons (#66, #75) is on Gregory's branch `show_booking_conf`; needs a PR and review.
