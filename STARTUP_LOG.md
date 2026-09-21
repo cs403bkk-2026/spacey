@@ -842,3 +842,30 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: #66 (confirmation page) and #75 (Pay button); the Pay button should show the "payment failed" message. Owner: Annabel and Gregory.
+
+#### Part 5: Paid and unpaid bookings on the dashboard (issue #96)
+
+**People and contributions**
+- Annabel (business owner) picked #96 and assigned it to Flurina, who implemented it.
+
+**Progress and evidence**
+- `/dashboard` now shows "Paid bookings" and "Unpaid bookings" under the Bookings total, using the values `compute_metrics` has returned since #85.
+- `pytest -q tests`: 73 passed, 5 runs in a row (71 existing, 2 new). Both new tests fail on main's `app.py`.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/98
+
+**Decisions and reasons**
+- Did this straight after #85 because the dashboard is due Tuesday and its single Bookings number was still ambiguous now that bookings start unpaid.
+- The main test uses two paid and one unpaid booking, so swapped labels would be caught.
+
+**Attempts and problems**
+- None.
+
+**Shortcuts and unfinished work**
+- Still plain HTML with a handful of numbers, no styling or charts, in line with the "keep the UI basic" guidance.
+- Revenue is still worked out from the space's current price (#78).
+
+**Help and tools**
+- Used Claude Code to make the two-line change and write the tests. I read the diff, checked the new tests fail on main's `app.py`, and re-ran the suite 5 times before pushing.
+
+**Next steps**
+- Action: the confirmation page with Pay and Unlock buttons (#66, #75) is on Gregory's branch `show_booking_conf`; needs a PR and review.
