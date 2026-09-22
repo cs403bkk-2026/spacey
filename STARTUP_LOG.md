@@ -988,3 +988,31 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: #106 (include amount_cents in booking responses), now that the spec makes the gap explicit.
 - Action: Gregory/Annabel to pick the next issue.
+
+#### Part 2: Show the amount charged on bookings and the confirmation page (issues #106, #114)
+
+**People and contributions**
+- Both are sub-issues of #117 (complete the payment flow); Flurina picked them up together since they touch the same page and data.
+
+**Progress and evidence**
+- `amount_cents` now appears on every booking response - create, get, list, list-per-space, pay, cancel.
+- The confirmation page shows the total before paying and after: "Not paid yet - total $x.xx..." then "Paid. Total: $x.xx".
+- `pytest -q tests`: 95 passed, 5 runs in a row (91 existing, 4 new, 2 fixed to include the new field). All 4 new tests fail on main's `app.py`.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/124
+
+**Decisions and reasons**
+- Did #106 and #114 as one PR since they are the same underlying data on the same page.
+- Reused the amount already stored at booking time (#78), so a later price change or a subscriber's $0 booking both show correctly without new logic.
+
+**Attempts and problems**
+- Two existing tests asserted an exact booking dict and broke the moment `amount_cents` appeared. Fixed by adding the field to what they expect, rather than loosening the assertion.
+
+**Shortcuts and unfinished work**
+- The homepage's own space list doesn't show a total, only the confirmation page does.
+- #117 (complete the payment flow) still isn't fully closed: no mocked card details are collected anywhere.
+
+**Help and tools**
+- Used Claude Code to add the field to every booking query and update the confirmation page, and to write the tests. I read the diff, confirmed the new tests fail on main's `app.py`, re-ran the suite 5 times, and rendered the page for a real booking before pushing.
+
+**Next steps**
+- Action: decide what's left to close #117 - mocked card details on the confirmation page, or is showing the price and paying enough for the "pay once" story. Owner: Annabel.
