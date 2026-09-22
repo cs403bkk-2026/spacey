@@ -701,6 +701,98 @@ def test_unlock_unknown_booking_returns_404():
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
 
+def test_registering_creates_an_account():
+    client = make_client()
+
+    response = client.post(
+        "/register", json={"email": "Annabel@Example.com", "password": "hunter22"}
+    )
+
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body == {"id": 1, "email": "annabel@example.com"}
+    assert "password" not in body
+    assert "password_hash" not in body
+
+def test_registering_does_not_store_the_plain_password():
+    client = make_client()
+    app = create_app(reset_on_start=False)
+    client.post("/register", json={"email": "annabel@example.com", "password": "hunter22"})
+
+    with app.db.cursor() as cur:
+        cur.execute("SELECT password_hash FROM users WHERE email = 'annabel@example.com'")
+        stored = cur.fetchone()["password_hash"]
+
+    assert stored != "hunter22"
+    assert "hunter22" not in stored
+
+def test_registering_with_a_duplicate_email_is_rejected():
+    client = make_client()
+    client.post("/register", json={"email": "annabel@example.com", "password": "hunter22"})
+
+    # case shouldn't matter either
+    response = client.post(
+        "/register", json={"email": "Annabel@Example.com", "password": "different"}
+    )
+
+    assert response.status_code == 409
+    assert response.get_json() == {"error": "email is already registered"}
+
+def test_registering_with_a_bad_email_is_rejected():
+    client = make_client()
+
+    for email in ["not-an-email", "missing-domain@", "@missing-local.com", "", None, 42]:
+        response = client.post(
+            "/register", json={"email": email, "password": "hunter22"}
+        )
+
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "enter a valid email address"}
+
+def test_registering_with_a_short_password_is_rejected():
+    client = make_client()
+
+    for password in ["short", "", None, 12345678]:
+        response = client.post(
+            "/register", json={"email": "annabel@example.com", "password": password}
+        )
+
+        assert response.status_code == 400
+        assert response.get_json() == {
+            "error": "password must be at least 8 characters"
+        }
+
+    # nothing got created
+    assert client.get("/register").status_code == 200
+
+def test_register_form_creates_an_account_and_redirects_with_a_message():
+    client = make_client()
+
+    response = client.post(
+        "/register", data={"email": "annabel@example.com", "password": "hunter22"}
+    )
+
+    assert response.status_code == 302
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+    assert "Registered!" in body
+
+def test_register_form_with_invalid_input_shows_the_error():
+    client = make_client()
+
+    response = client.post(
+        "/register", data={"email": "not-an-email", "password": "hunter22"}
+    )
+
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+    assert "enter a valid email address" in body
+
+def test_homepage_links_to_register():
+    client = make_client()
+
+    body = client.get("/").get_data(as_text=True)
+
+    assert 'href="/register"' in body
+
 def test_subscribing_returns_an_active_subscription():
     client = make_client()
 
