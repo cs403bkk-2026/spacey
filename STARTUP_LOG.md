@@ -1016,3 +1016,32 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: decide what's left to close #117 - mocked card details on the confirmation page, or is showing the price and paying enough for the "pay once" story. Owner: Annabel.
+
+#### Part 4: Log in and log out (issue #122)
+
+**People and contributions**
+- Direct next step in #120 after #121 (registration). Flurina implemented it.
+
+**Progress and evidence**
+- `POST /login` (JSON and HTML form) and `POST /logout`, using Flask's session. A wrong password and an unknown email return the identical 401 `invalid email or password`, so a failed attempt can't be used to find out who has an account. The homepage shows Register/Login when logged out, or the logged-in email with a Logout button.
+- `pytest -q tests`: 111 passed, 5 runs in a row (103 existing, 8 new). All 8 fail without the change.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/135 (stacked on the still-open #131, since login needs the users table)
+
+**Decisions and reasons**
+- `SECRET_KEY` follows the same env-var-with-a-dev-default pattern as `DATABASE_URL`; a comment says a real deployment must set a real one.
+- The homepage nav clears a stale session (a user id that no longer exists, e.g. after a dev DB reset) instead of showing a broken logged-in state.
+
+**Attempts and problems**
+- First draft of two logout tests asserted a 200 JSON response, but a plain `client.post("/logout")` with no body isn't a JSON request, so it took the redirect branch and returned 302 - fixed by passing `json={}` where the test wants the JSON response, and keeping a separate test for the plain form/button path.
+
+**Shortcuts and unfinished work**
+- No "remember me" - the session is a plain cookie with no expiry set beyond Flask's default.
+- No rate limiting on login attempts.
+- Bookings still aren't linked to a user id, only a free-text member name - that's #86, and is what #123 ("My bookings" page) will need next.
+
+**Help and tools**
+- Used Claude Code to implement the routes and session handling and to write the tests. I confirmed the new tests fail against the register-branch baseline, re-ran the suite 5 times, and checked the whole flow with real cookies over HTTP (register, wrong password, unknown email, form login, the homepage reflecting the session, and the Logout button) before pushing.
+
+**Next steps**
+- Action: #123 ("My bookings" page), now that login exists - but it needs bookings linked to a real user id first, not just a name.
+- Action: SECRET_KEY needs to be added to #47's environment variable list for the real deployment.
