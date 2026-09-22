@@ -930,6 +930,7 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: Annabel to confirm the amount-0 decision, and whether subscriptions need a price and a cancel next.
 - Action: a way to subscribe from the browser (new issue).
+
 #### Part 8: Let PATCH change a space's price (issue #105)
 
 **People and contributions**
@@ -958,3 +959,32 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: #106 (show the amount on the booking) once Gregory's confirmation page (#100) is merged.
 - Action: Annabel to decide what counts as "in the past" for #102, and to prioritise #101 (subscriptions).
+
+## 2026-09-22 - Day 9
+
+#### Part 1: Add an OpenAPI specification (issue #113)
+
+**People and contributions**
+- Maksym asked for this before the handover; Annabel assigned it to Flurina.
+
+**Progress and evidence**
+- Added `openapi.yaml` documenting all 10 JSON endpoints - health, spaces (list/create/get/update/delete), space bookings, all bookings, pay, unlock, subscribe, and metrics - with request bodies, response shapes and status codes. Linked from `README.md`.
+- Validated the file parses and validates as OpenAPI 3.0.3 with `openapi-spec-validator`. Hit every documented endpoint through the real app and compared actual responses against the spec; all matched.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/116
+
+**Decisions and reasons**
+- Documented only the JSON API, matching the issue's own endpoint list. The HTML pages (space list, booking form, confirmation page, dashboard) aren't part of it, since they return HTML, not JSON.
+- Found while checking every response that booking replies don't include `amount_cents`, even though it's been stored since #78. Documented that gap and pointed at #106 rather than fixing it here, since that's a code change, not a docs one.
+
+**Attempts and problems**
+- None - reading the real code and testing every endpoint's actual response caught the amount_cents gap before it could make the spec wrong.
+
+**Shortcuts and unfinished work**
+- No request/response examples rendered as a browsable page (e.g. Swagger UI hosted somewhere) - README points people at pasting it into editor.swagger.io for now.
+
+**Help and tools**
+- Used Claude Code to read every route in `app.py`, write the spec, and check it. I reviewed the file and confirmed the endpoint-by-endpoint comparison against the real app before pushing.
+
+**Next steps**
+- Action: #106 (include amount_cents in booking responses), now that the spec makes the gap explicit.
+- Action: Gregory/Annabel to pick the next issue.
