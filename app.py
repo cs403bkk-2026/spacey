@@ -1,12 +1,14 @@
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
 import psycopg
 from flask import Flask, jsonify, redirect, request, url_for
 from markupsafe import escape
-from psycopg.errors import DeadlockDetected, ExclusionViolation
+from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
+from werkzeug.security import generate_password_hash
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -46,6 +48,18 @@ def get_connection(database_url: str) -> psycopg.Connection:
                 member TEXT PRIMARY KEY,
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 started_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        # First step of #120 (real accounts): just registration for now.
+        # Storing only a hash, never the password itself.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
@@ -168,6 +182,18 @@ def is_valid_price(price) -> bool:
     return isinstance(price, int) and not isinstance(price, bool) and price >= 0
 
 
+# Deliberately simple: good enough to catch a typo, not full RFC 5322.
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def is_valid_email(email) -> bool:
+    return isinstance(email, str) and EMAIL_RE.match(email.strip()) is not None
+
+
+def is_valid_password(password) -> bool:
+    return isinstance(password, str) and len(password) >= 8
+
+
 def member_key(name: str) -> str:
     return name.strip().lower()
 
@@ -229,7 +255,8 @@ def reset_tables(conn: psycopg.Connection) -> None:
     deployment's data survives an app restart."""
     with conn.cursor() as cur:
         cur.execute(
-            "TRUNCATE bookings, spaces, subscriptions RESTART IDENTITY CASCADE"
+            "TRUNCATE bookings, spaces, subscriptions, users "
+            "RESTART IDENTITY CASCADE"
         )
 
 def seed_starter_space(conn: psycopg.Connection) -> None:
@@ -300,10 +327,74 @@ def create_app(
             {message}
             <p>Times are Bangkok time (UTC+7).</p>
             <ul>{items}</ul>
-            <p><a href="/dashboard">View business metrics</a></p>
+            <p><a href="/register">Register</a> ·
+               <a href="/dashboard">View business metrics</a></p>
           </body>
         </html>
         """
+
+    def register_user(email, password):
+        """Shared by the JSON API and the HTML register form.
+        Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
+        if not is_valid_email(email):
+            return {"error": "enter a valid email address"}, 400
+        if not is_valid_password(password):
+            return {"error": "password must be at least 8 characters"}, 400
+
+        email = email.strip().lower()
+        password_hash = generate_password_hash(password)
+
+        with app.db.cursor() as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO users (email, password_hash) VALUES (%s, %s) "
+                    "RETURNING id, email",
+                    (email, password_hash),
+                )
+            except UniqueViolation:
+                return {"error": "email is already registered"}, 409
+            user = cur.fetchone()
+
+        return user, 201
+
+    @app.get("/register")
+    def register_form():
+        message = ""
+        if request.args.get("registered"):
+            message = "<p>Registered! Logging in is coming soon (#122).</p>"
+        elif request.args.get("error"):
+            message = f"<p>{escape(request.args['error'])}</p>"
+
+        return f"""
+        <html>
+          <head><title>Spacey - Register</title></head>
+          <body>
+            <h1>Register</h1>
+            {message}
+            <form method="post" action="/register">
+              <input type="email" name="email" placeholder="Email" required>
+              <input type="password" name="password"
+                     placeholder="Password (min 8 characters)" required>
+              <button type="submit">Register</button>
+            </form>
+            <p><a href="/">Back to spaces</a></p>
+          </body>
+        </html>
+        """
+
+    @app.post("/register")
+    def register():
+        if request.is_json:
+            body = request.get_json(silent=True) or {}
+            payload, status = register_user(body.get("email"), body.get("password"))
+            return jsonify(payload), status
+
+        payload, status = register_user(
+            request.form.get("email"), request.form.get("password")
+        )
+        if status >= 400:
+            return redirect(url_for("register_form", error=payload["error"]))
+        return redirect(url_for("register_form", registered=payload["id"]))
 
     @app.get("/health")
     def health():
