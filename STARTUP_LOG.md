@@ -1016,3 +1016,34 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: decide what's left to close #117 - mocked card details on the confirmation page, or is showing the price and paying enough for the "pay once" story. Owner: Annabel.
+
+#### Part 3: Register with email and password (issue #121)
+
+**People and contributions**
+- Agreed in today's meeting (#120): members need real accounts. #121 is the explicit starting point of that epic. Flurina implemented it.
+
+**Progress and evidence**
+- New `users` table (email, password hash, created_at). `POST /register` serves both the JSON API and the HTML form at `GET /register`, linked from the homepage. Duplicate email (case-insensitive) returns 409, a bad email or a password under 8 characters returns 400.
+- Passwords are hashed with `werkzeug.security`, never stored as plain text - checked directly in Postgres, not just via the API response.
+- `pytest -q tests`: 103 passed, 5 runs in a row (95 existing, 8 new). All 8 fail on main's `app.py`.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/131
+
+**Decisions and reasons**
+- Used one `POST /register` route for both JSON and the HTML form, branching on `request.is_json`, rather than a second path like the booking form used - the issue names exactly one API path.
+- The issue text floats skipping hashing since this is a mockup, but its own Fix/Done-when sections are explicit about hashing. Followed the explicit spec, flagged the tension to Annabel for a quick confirm.
+- Email is normalized (trimmed, lower-cased) before the uniqueness check and storage, same pattern as member names for subscriptions.
+
+**Attempts and problems**
+- None - the werkzeug password hashing and psycopg's unique-violation handling were already used elsewhere in the codebase in a similar shape (subscriptions, PATCH price), so this followed established patterns.
+
+**Shortcuts and unfinished work**
+- No login yet (#122) - a registered user can't do anything with the account until then.
+- No email confirmation, no real email sending - #120's full flow is a no-reply mocked outbox, not built yet.
+- The register form has no styling, matching the rest of the site.
+
+**Help and tools**
+- Used Claude Code to design the table, the shared register_user helper, and the tests, and to check the whole flow end to end including looking directly at the hashed value in Postgres. I reviewed the diff, confirmed the new tests fail on main's `app.py`, and re-ran the suite 5 times before pushing.
+
+**Next steps**
+- Action: #122 (log in and log out), now that accounts exist. Owner: whoever's next.
+- Action: Annabel to confirm the hashing decision, since the issue itself raised it as a question.
