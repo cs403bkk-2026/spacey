@@ -140,6 +140,58 @@ def test_confirmation_page_shows_times_in_bangkok_time():
     assert "2026-09-25 09:00" in page
     assert "2026-09-25 10:00" in page
 
+def test_confirmation_page_shows_the_total_before_and_after_paying():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500})
+
+    client.post("/spaces/2/book", data={"member": "annabel", **form_slot(1, 2)})
+    before = client.get("/bookings/1/confirmation").get_data(as_text=True)
+    assert "Not paid yet - total $15.00" in before
+    assert ">Pay</button>" in before
+
+    client.post("/bookings/1/confirmation/pay")
+    after = client.get("/bookings/1/confirmation").get_data(as_text=True)
+    assert "Paid. Total: $15.00" in after
+
+def test_booking_responses_include_the_amount_charged():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500})
+
+    created = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    assert created["amount_cents"] == 1500
+
+    # every other place a booking shows up agrees with what was charged
+    assert client.get(f"/bookings/{created['id']}").get_json()["amount_cents"] == 1500
+    assert client.get("/bookings").get_json()["bookings"][0]["amount_cents"] == 1500
+    assert client.get("/spaces/2/bookings").get_json()["bookings"][0]["amount_cents"] == 1500
+    paid = client.post(f"/bookings/{created['id']}/pay").get_json()
+    assert paid["amount_cents"] == 1500
+    cancelled = client.delete(f"/bookings/{created['id']}").get_json()
+    assert cancelled["amount_cents"] == 1500
+
+def test_a_price_change_after_booking_does_not_change_the_amount_shown():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 500})
+    created = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    client.patch("/spaces/2", json={"price_cents": 2000})
+
+    assert client.get(f"/bookings/{created['id']}").get_json()["amount_cents"] == 500
+
+def test_a_subscribers_booking_shows_zero_amount_on_the_confirmation_page():
+    client = make_client()
+    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500})
+    client.post("/members/annabel/subscribe")
+
+    client.post("/spaces/2/book", data={"member": "annabel", **form_slot(1, 2)})
+    page = client.get("/bookings/1/confirmation").get_data(as_text=True)
+
+    assert "Paid. Total: $0.00" in page
+
 def test_form_times_are_read_as_bangkok_time():
     client = make_client()
 
@@ -343,6 +395,7 @@ def test_create_booking_for_existing_space_succeeds():
         "space_id": 1,
         "member": "annabel",
         "paid": False,  # unpaid until /pay is called
+        "amount_cents": 0,  # Founders Desk has no price set
         **slot(1, 2),
     }
 
@@ -460,6 +513,7 @@ def test_find_booking_returns_the_booking():
         "space_id": 1,
         "member": "annabel",
         "paid": False,
+        "amount_cents": 0,
         **slot(1, 2),
     }
 

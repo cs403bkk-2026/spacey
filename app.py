@@ -456,7 +456,7 @@ def create_app(
                 return jsonify(error="space not found"), 404
 
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
                 "FROM bookings WHERE space_id = %s ORDER BY start_time",
                 (space_id,),
             )
@@ -511,7 +511,7 @@ def create_app(
                     "INSERT INTO bookings "
                     "(space_id, member, paid, start_time, end_time, amount_cents) "
                     "VALUES (%s, %s, %s, %s, %s, %s) "
-                    "RETURNING id, space_id, member, paid, start_time, end_time",
+                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
                     (
                         space_id,
                         member,
@@ -574,7 +574,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT b.id, b.member, b.paid, b.start_time, b.end_time, "
-                "s.name AS space_name "
+                "b.amount_cents, s.name AS space_name "
                 "FROM bookings b JOIN spaces s ON s.id = b.space_id "
                 "WHERE b.id = %s",
                 (booking_id,),
@@ -584,16 +584,18 @@ def create_app(
         if booking is None:
             return "<p>Booking not found. <a href='/'>Back to spaces</a></p>", 404
 
+        total_display = f"${booking['amount_cents'] / 100:.2f}"
+
         if booking["paid"]:
             action = f"""
-              <p>Paid.</p>
+              <p>Paid. Total: {total_display}</p>
               <form method="post" action="/bookings/{booking_id}/confirmation/unlock">
                 <button type="submit">Unlock</button>
               </form>
             """
         else:
             action = f"""
-              <p>Not paid yet - pay to get your access code.</p>
+              <p>Not paid yet - total {total_display}, pay to get your access code.</p>
               <form method="post" action="/bookings/{booking_id}/confirmation/pay">
                 <button type="submit">Pay</button>
               </form>
@@ -651,7 +653,7 @@ def create_app(
     def list_bookings():
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
                 "FROM bookings ORDER BY start_time"
             )
             rows = cur.fetchall()
@@ -662,7 +664,7 @@ def create_app(
     def find_booking(booking_id):
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -678,7 +680,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time",
+                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
                 (booking_id,),
             )
             row = cur.fetchone()
@@ -701,7 +703,7 @@ def create_app(
 
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -714,7 +716,7 @@ def create_app(
                     return {"error": "payment failed"}, 402
                 cur.execute(
                     "UPDATE bookings SET paid = TRUE WHERE id = %s "
-                    "RETURNING id, space_id, member, paid, start_time, end_time",
+                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
                     (booking_id,),
                 )
                 row = cur.fetchone()
