@@ -41,6 +41,10 @@ Then open <http://127.0.0.1:8000/>.
 
 Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## API reference
+
+Every JSON endpoint is documented in [openapi.yaml](openapi.yaml) (OpenAPI 3.0). Paste its contents into <https://editor.swagger.io> for a browsable version, or view it with any OpenAPI tool. A few routes render HTML pages for a browser instead (the space list, the booking form, the booking confirmation page, `/dashboard`) and are not part of that document.
+
 The live URL and deployment-log link will be added here before students are invited.
 
 ## Start useful work
