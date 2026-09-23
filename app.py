@@ -4,15 +4,19 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import psycopg
-from flask import Flask, jsonify, redirect, request, url_for
+from flask import Flask, jsonify, redirect, request, session, url_for
 from markupsafe import escape
 from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
 )
+# Signs the login session cookie. Fine for local/dev; a real deployment
+# must set a real SECRET_KEY (see issue #47), or every restart logs
+# everyone out and, worse, an unset default would be a known, public key.
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-not-for-production")
 
 
 def get_connection(database_url: str) -> psycopg.Connection:
@@ -83,6 +87,13 @@ def get_connection(database_url: str) -> psycopg.Connection:
         # Price charged at booking time, so a later price change can't rewrite past revenue.
         cur.execute(
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount_cents INTEGER"
+        )
+        # Links a booking to the account that was logged in when it was made
+        # (#134, the first concrete step of #86). NULL for a guest booking
+        # made while logged out, and for every booking made before this.
+        cur.execute(
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
+            "user_id INTEGER REFERENCES users (id)"
         )
         # Bookings from before that column existed get the space's current price (best we have).
         cur.execute(
@@ -285,6 +296,7 @@ def create_app(
         reset_on_start = os.getenv("RESET_DB_ON_START", "false").lower() == "true"
 
     app = Flask(__name__)
+    app.secret_key = SECRET_KEY
     app.db = get_connection(database_url)
     if reset_on_start:
         reset_tables(app.db)
@@ -300,6 +312,21 @@ def create_app(
                 "WHERE start_time <= now() AND end_time > now()"
             )
             booked_ids = {row["space_id"] for row in cur.fetchall()}
+
+            account_nav = '<a href="/register">Register</a> · <a href="/login">Log in</a>'
+            user_id = session.get("user_id")
+            if user_id is not None:
+                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+                user = cur.fetchone()
+                if user is None:
+                    session.pop("user_id", None)  # stale session, e.g. after a DB reset
+                else:
+                    account_nav = (
+                        f"Logged in as {escape(user['email'])} "
+                        '<form method="post" action="/logout" '
+                        'style="display:inline"><button type="submit">'
+                        "Log out</button></form>"
+                    )
 
         def booking_form(space_id):
             return f"""
@@ -337,8 +364,7 @@ def create_app(
             {message}
             <p>Times are Bangkok time (UTC+7).</p>
             <ul>{items}</ul>
-            <p><a href="/register">Register</a> ·
-               <a href="/dashboard">View business metrics</a></p>
+            <p>{account_nav} · <a href="/dashboard">View business metrics</a></p>
           </body>
         </html>
         """
@@ -405,6 +431,72 @@ def create_app(
         if status >= 400:
             return redirect(url_for("register_form", error=payload["error"]))
         return redirect(url_for("register_form", registered=payload["id"]))
+
+    def login_user(email, password):
+        """Shared by the JSON API and the HTML login form.
+        Returns (payload, status) - {"id": ..., "email": ...}, or an error.
+        Wrong password and unknown email give the identical error, so a
+        failed attempt can't be used to find out which emails are registered."""
+        invalid = {"error": "invalid email or password"}, 401
+        if not isinstance(email, str) or not isinstance(password, str):
+            return invalid
+
+        with app.db.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, password_hash FROM users WHERE email = %s",
+                (email.strip().lower(),),
+            )
+            user = cur.fetchone()
+
+        if user is None or not check_password_hash(user["password_hash"], password):
+            return invalid
+
+        session["user_id"] = user["id"]
+        return {"id": user["id"], "email": user["email"]}, 200
+
+    @app.get("/login")
+    def login_form():
+        message = ""
+        if request.args.get("error"):
+            message = f"<p>{escape(request.args['error'])}</p>"
+
+        return f"""
+        <html>
+          <head><title>Spacey - Log in</title></head>
+          <body>
+            <h1>Log in</h1>
+            {message}
+            <form method="post" action="/login">
+              <input type="email" name="email" placeholder="Email" required>
+              <input type="password" name="password" placeholder="Password" required>
+              <button type="submit">Log in</button>
+            </form>
+            <p><a href="/register">Register</a> · <a href="/">Back to spaces</a></p>
+          </body>
+        </html>
+        """
+
+    @app.post("/login")
+    def login():
+        if request.is_json:
+            body = request.get_json(silent=True) or {}
+            payload, status = login_user(body.get("email"), body.get("password"))
+            return jsonify(payload), status
+
+        payload, status = login_user(
+            request.form.get("email"), request.form.get("password")
+        )
+        if status >= 400:
+            return redirect(url_for("login_form", error=payload["error"]))
+        return redirect(url_for("index"))
+
+    @app.post("/logout")
+    def logout():
+        # Idempotent: logging out when already logged out just does nothing.
+        session.pop("user_id", None)
+        if request.is_json:
+            return jsonify(status="ok")
+        return redirect(url_for("index"))
 
     @app.get("/health")
     def health():
@@ -557,7 +649,7 @@ def create_app(
                 return jsonify(error="space not found"), 404
 
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings WHERE space_id = %s ORDER BY start_time",
                 (space_id,),
             )
@@ -607,12 +699,16 @@ def create_app(
             # Unpaid until POST /bookings/<id>/pay is called - unless the
             # member subscribes: then it is paid at once and costs nothing extra.
             subscribed = is_subscribed(cur, member)
+            # Linked to the account if one is logged in; NULL for a guest.
+            user_id = session.get("user_id")
             try:
                 cur.execute(
                     "INSERT INTO bookings "
-                    "(space_id, member, paid, start_time, end_time, amount_cents) "
-                    "VALUES (%s, %s, %s, %s, %s, %s) "
-                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
+                    "(space_id, member, paid, start_time, end_time, "
+                    "amount_cents, user_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                    "RETURNING id, space_id, member, paid, start_time, end_time, "
+                    "amount_cents, user_id",
                     (
                         space_id,
                         member,
@@ -620,6 +716,7 @@ def create_app(
                         start_time,
                         end_time,
                         0 if subscribed else space["price_cents"],
+                        user_id,
                     ),
                 )
             except (DeadlockDetected, ExclusionViolation):
@@ -754,7 +851,7 @@ def create_app(
     def list_bookings():
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings ORDER BY start_time"
             )
             rows = cur.fetchall()
@@ -765,7 +862,7 @@ def create_app(
     def find_booking(booking_id):
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -781,7 +878,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
+                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id",
                 (booking_id,),
             )
             row = cur.fetchone()
@@ -804,7 +901,7 @@ def create_app(
 
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -817,7 +914,7 @@ def create_app(
                     return {"error": "payment failed"}, 402
                 cur.execute(
                     "UPDATE bookings SET paid = TRUE WHERE id = %s "
-                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
+                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id",
                     (booking_id,),
                 )
                 row = cur.fetchone()
