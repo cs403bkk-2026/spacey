@@ -1047,3 +1047,35 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: #122 (log in and log out), now that accounts exist. Owner: whoever's next.
 - Action: Annabel to confirm the hashing decision, since the issue itself raised it as a question.
+
+
+
+#### Part 6: Rewrite README, document configuration (issues #46, #47)
+
+**People and contributions**
+- Flurina picked deliberately because it's independent of the code still waiting on review (#135, #145, #146).
+
+**Progress and evidence**
+- README now has correct setup steps (the old ones pointed at the wrong DB port and a Flask port that's silently taken by AirPlay on macOS), a Configuration table for DATABASE_URL/APP_REVISION/RESET_DB_ON_START/SECRET_KEY, and a full endpoint reference.
+- A bad or unreachable DATABASE_URL now fails fast with a clear message instead of a raw psycopg traceback.
+- Added `testpaths = tests` to pytest.ini - fixes plain `pytest` crashing on `scripts/load_test.py`, an action item open since Day 6.
+- Found and fixed openapi.yaml being stale: it didn't cover /register, /login, /logout at all, and its Booking schema still said amount_cents wasn't returned, though that shipped weeks ago.
+- `pytest` (no path): 104 passed, 5 runs in a row. The fail-fast test fails on unmodified main with a raw traceback and passes with the fix.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/147
+
+**Decisions and reasons**
+- Documented the account features (login, account-linked bookings) as real, even though #135/#145 are still in review, since that's the intended shipped state and this doc is for the 28 Sept handover.
+- Put configuration in README rather than a separate .env.example, since the issue allowed either and README already has a natural home for it.
+
+**Attempts and problems**
+- None.
+
+**Shortcuts and unfinished work**
+- The endpoint reference will need one more pass once #135/#145 actually merge, to drop the "in review" framing.
+- No live URL yet to add to the README (still blocked on DEPLOY_ENABLED status).
+
+**Help and tools**
+- Used Claude Code to rewrite the docs, add the fail-fast check and its test, and fix openapi.yaml. I reviewed the diff, confirmed the new test fails on unmodified main, re-ran the suite 5 times, and checked the real flask run output with a bad DATABASE_URL before pushing.
+
+**Next steps**
+- Action: update the endpoint reference framing once #135/#145 merge.
