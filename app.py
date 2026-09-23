@@ -95,6 +95,11 @@ def get_connection(database_url: str) -> psycopg.Connection:
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
             "user_id INTEGER REFERENCES users (id)"
         )
+        # Last 4 digits only (#119) - never the full card number or CVC.
+        # NULL until the booking is actually paid.
+        cur.execute(
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS card_last4 TEXT"
+        )
         # Bookings from before that column existed get the space's current price (best we have).
         cur.execute(
             "UPDATE bookings SET amount_cents = s.price_cents "
@@ -221,6 +226,30 @@ def is_valid_email(email) -> bool:
 
 def is_valid_password(password) -> bool:
     return isinstance(password, str) and len(password) >= 8
+
+
+CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
+CVC_RE = re.compile(r"^\d{3,4}$")
+EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
+
+
+def validate_card(card_number, expiry, cvc) -> str | None:
+    """Returns an error message, or None if the (mocked) card looks valid -
+    right shape and not expired, not a real Luhn/network check."""
+    if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
+        return "card_number must be 13-19 digits"
+    if not isinstance(cvc, str) or not CVC_RE.match(cvc):
+        return "cvc must be 3 or 4 digits"
+    if not isinstance(expiry, str):
+        return "expiry must be in MM/YY format"
+    match = EXPIRY_RE.match(expiry)
+    if match is None:
+        return "expiry must be in MM/YY format"
+    month, year = int(match.group(1)), 2000 + int(match.group(2))
+    now = datetime.now(timezone.utc)
+    if (year, month) < (now.year, now.month):
+        return "card has expired"
+    return None
 
 
 def member_key(name: str) -> str:
@@ -686,7 +715,7 @@ def create_app(
                 return jsonify(error="space not found"), 404
 
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4 "
                 "FROM bookings WHERE space_id = %s ORDER BY start_time",
                 (space_id,),
             )
@@ -745,7 +774,7 @@ def create_app(
                     "amount_cents, user_id) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s) "
                     "RETURNING id, space_id, member, paid, start_time, end_time, "
-                    "amount_cents, user_id",
+                    "amount_cents, user_id, card_last4",
                     (
                         space_id,
                         member,
@@ -813,7 +842,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT b.id, b.member, b.paid, b.start_time, b.end_time, "
-                "b.amount_cents, s.name AS space_name "
+                "b.amount_cents, b.card_last4, s.name AS space_name "
                 "FROM bookings b JOIN spaces s ON s.id = b.space_id "
                 "WHERE b.id = %s",
                 (booking_id,),
@@ -826,8 +855,13 @@ def create_app(
         total_display = f"${booking['amount_cents'] / 100:.2f}"
 
         if booking["paid"]:
+            card_display = (
+                f" (card ending {booking['card_last4']})"
+                if booking["card_last4"]
+                else ""
+            )
             action = f"""
-              <p>Paid. Total: {total_display}</p>
+              <p>Paid. Total: {total_display}{card_display}</p>
               <form method="post" action="/bookings/{booking_id}/confirmation/unlock">
                 <button type="submit">Unlock</button>
               </form>
@@ -836,6 +870,9 @@ def create_app(
             action = f"""
               <p>Not paid yet - total {total_display}, pay to get your access code.</p>
               <form method="post" action="/bookings/{booking_id}/confirmation/pay">
+                <input name="card_number" placeholder="Card number (mocked, e.g. 4242424242424242)" required>
+                <input name="expiry" placeholder="MM/YY" required>
+                <input name="cvc" placeholder="CVC" required>
                 <button type="submit">Pay</button>
               </form>
             """
@@ -866,7 +903,18 @@ def create_app(
 
     @app.post("/bookings/<int:booking_id>/confirmation/pay")
     def pay_from_confirmation(booking_id):
-        mark_booking_paid(booking_id)  # mocked payment, same as the API
+        payload, status = mark_booking_paid(
+            booking_id,
+            request.form.get("card_number"),
+            request.form.get("expiry"),
+            request.form.get("cvc"),
+        )
+        if status >= 400:
+            return redirect(
+                url_for(
+                    "booking_confirmation", booking_id=booking_id, error=payload["error"]
+                )
+            )
         return redirect(url_for("booking_confirmation", booking_id=booking_id))
 
     @app.post("/bookings/<int:booking_id>/confirmation/unlock")
@@ -939,7 +987,7 @@ def create_app(
     def list_bookings():
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4 "
                 "FROM bookings ORDER BY start_time"
             )
             rows = cur.fetchall()
@@ -950,7 +998,7 @@ def create_app(
     def find_booking(booking_id):
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4 "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -966,7 +1014,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id",
+                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4",
                 (booking_id,),
             )
             row = cur.fetchone()
@@ -976,38 +1024,43 @@ def create_app(
 
         return jsonify(booking_to_json(row))
 
-    def mark_booking_paid(booking_id):
-        """Mocked payment: no provider, always succeeds. Paying an
+    def mark_booking_paid(booking_id, card_number, expiry, cvc, force_failure=False):
+        """Mocked payment: no provider, so it succeeds unless force_failure
+        is set or the card doesn't look valid (see validate_card). Paying an
         already-paid booking is a no-op rather than an error, so a retried
-        request can't break the flow. Returns the booking, or None."""
-        # Mocked payment: no real provider, so it succeeds unless the request
-        # body has {"force_failure": true} - that lets us show and test the
-        # failure path. Paying an already-paid booking is a no-op rather than
-        # an error, so a retried request can't break the flow or charge twice.
-        body = request.get_json(silent=True)
-        force_failure = isinstance(body, dict) and body.get("force_failure") is True
-
+        request can't break the flow or charge twice - and doesn't need a
+        card either. Only the card's last 4 digits are ever stored.
+        Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
+                "SELECT id, space_id, member, paid, start_time, end_time, "
+                "amount_cents, user_id, card_last4 "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
             row = cur.fetchone()
             if row is None:
-                return None
+                return {"error": "booking not found"}, 404
 
-            if not row["paid"]:
-                if force_failure:
-                    return {"error": "payment failed"}, 402
-                cur.execute(
-                    "UPDATE bookings SET paid = TRUE WHERE id = %s "
-                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id",
-                    (booking_id,),
-                )
-                row = cur.fetchone()
+            if row["paid"]:
+                return booking_to_json(row), 200
 
-        return row
+            card_error = validate_card(card_number, expiry, cvc)
+            if card_error:
+                return {"error": card_error}, 400
+
+            if force_failure:
+                return {"error": "payment failed"}, 402
+
+            cur.execute(
+                "UPDATE bookings SET paid = TRUE, card_last4 = %s WHERE id = %s "
+                "RETURNING id, space_id, member, paid, start_time, end_time, "
+                "amount_cents, user_id, card_last4",
+                (card_number[-4:], booking_id),
+            )
+            row = cur.fetchone()
+
+        return booking_to_json(row), 200
 
     def issue_access_code(booking_id):
         """Shared by the JSON API and the Unlock button.
@@ -1028,14 +1081,15 @@ def create_app(
 
     @app.post("/bookings/<int:booking_id>/pay")
     def pay_booking(booking_id):
-        row = mark_booking_paid(booking_id)
-        if isinstance(row, tuple):
-            payload, status = row
-            return jsonify(payload), status
-        if row is None:
-            return jsonify(error="booking not found"), 404
-
-        return jsonify(booking_to_json(row))
+        body = request.get_json(silent=True) or {}
+        payload, status = mark_booking_paid(
+            booking_id,
+            body.get("card_number"),
+            body.get("expiry"),
+            body.get("cvc"),
+            force_failure=body.get("force_failure") is True,
+        )
+        return jsonify(payload), status
 
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):

@@ -316,28 +316,54 @@ paths:
       tags: [bookings]
       summary: Pay for a booking (mocked).
       description: >
-        No real payment provider. Paying an already-paid booking is a
-        no-op, so a retried request can't charge twice. Pass
-        `force_failure: true` to make this attempt fail on purpose, for
-        testing the failure path - the booking is left unpaid.
+        No real payment provider or network - card details are checked for
+        shape only (right length, digits only, expiry not in the past),
+        not a real Luhn/network check (see issue #119). Only the card's
+        last 4 digits are ever stored or returned; the full number and CVC
+        are never persisted. Paying an already-paid booking is a no-op
+        (no card required for that retry), so a retried request can't
+        charge twice. Pass `force_failure: true` with a still-valid card
+        to make this attempt fail on purpose, for testing the failure
+        path - the booking is left unpaid.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
               properties:
+                card_number:
+                  type: string
+                  description: Digits only, 13-19 characters.
+                  example: "4242424242424242"
+                expiry:
+                  type: string
+                  description: MM/YY, must not be in the past.
+                  example: "12/30"
+                cvc:
+                  type: string
+                  description: Digits only, 3-4 characters.
+                  example: "123"
                 force_failure:
                   type: boolean
                   default: false
+              required: [card_number, expiry, cvc]
       responses:
         "200":
           description: Paid (or already was).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Booking" }
+        "400":
+          description: >
+            `card_number must be 13-19 digits`, `cvc must be 3 or 4
+            digits`, `expiry must be in MM/YY format`, or `card has
+            expired`. Not returned when the booking is already paid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "402":
           description: Payment failed (only when `force_failure` was set).
           content:
@@ -634,7 +660,15 @@ components:
             The account that was logged in when the booking was made (see
             issue #134), or null for a guest booking made while logged out.
           example: 1
-      required: [id, space_id, member, paid, start_time, end_time, amount_cents, user_id]
+        card_last4:
+          type: string
+          nullable: true
+          description: >
+            The last 4 digits of the card used to pay (see issue #119).
+            Null until the booking is paid; the full card number and CVC
+            are never stored or returned.
+          example: "4242"
+      required: [id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4]
 
     User:
       type: object
