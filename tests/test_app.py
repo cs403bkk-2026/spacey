@@ -17,6 +17,9 @@ def slot(start_hours, end_hours):
         "end_time": (NOW + timedelta(hours=end_hours)).isoformat(),
     }
 
+# A mocked, obviously-fake card - always valid, never a real payment.
+VALID_CARD = {"card_number": "4242424242424242", "expiry": "12/30", "cvc": "123"}
+
 def test_homepage_lists_spaces_with_availability():
     client = make_client()
     client.post(
@@ -142,7 +145,7 @@ def test_book_pay_unlock_all_the_way_through_the_browser():
     assert ">Pay</button>" in page
     assert ">Unlock</button>" not in page
 
-    paid = client.post("/bookings/1/confirmation/pay")
+    paid = client.post("/bookings/1/confirmation/pay", data=VALID_CARD)
     page = client.get(paid.headers["Location"]).get_data(as_text=True)
 
     assert "Paid." in page
@@ -198,7 +201,7 @@ def test_confirmation_page_shows_the_total_before_and_after_paying():
     assert "Not paid yet - total $15.00" in before
     assert ">Pay</button>" in before
 
-    client.post("/bookings/1/confirmation/pay")
+    client.post("/bookings/1/confirmation/pay", data=VALID_CARD)
     after = client.get("/bookings/1/confirmation").get_data(as_text=True)
     assert "Paid. Total: $15.00" in after
 
@@ -271,7 +274,7 @@ def test_booking_responses_include_the_amount_charged():
     assert client.get(f"/bookings/{created['id']}").get_json()["amount_cents"] == 1500
     assert client.get("/bookings").get_json()["bookings"][0]["amount_cents"] == 1500
     assert client.get("/spaces/2/bookings").get_json()["bookings"][0]["amount_cents"] == 1500
-    paid = client.post(f"/bookings/{created['id']}/pay").get_json()
+    paid = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD).get_json()
     assert paid["amount_cents"] == 1500
     cancelled = client.delete(f"/bookings/{created['id']}").get_json()
     assert cancelled["amount_cents"] == 1500
@@ -502,6 +505,7 @@ def test_create_booking_for_existing_space_succeeds():
         "paid": False,  # unpaid until /pay is called
         "amount_cents": 0,  # Founders Desk has no price set
         "user_id": None,  # not logged in
+        "card_last4": None,  # not paid yet
         **slot(1, 2),
     }
 
@@ -621,6 +625,7 @@ def test_find_booking_returns_the_booking():
         "paid": False,
         "amount_cents": 0,
         "user_id": None,
+        "card_last4": None,
         **slot(1, 2),
     }
 
@@ -664,10 +669,10 @@ def test_pay_flips_a_booking_to_paid():
     ).get_json()
     assert created["paid"] is False
 
-    response = client.post(f"/bookings/{created['id']}/pay")
+    response = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
     assert response.status_code == 200
-    assert response.get_json() == {**created, "paid": True}
+    assert response.get_json() == {**created, "paid": True, "card_last4": "4242"}
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is True
 
 def test_paying_twice_is_still_paid():
@@ -675,9 +680,9 @@ def test_paying_twice_is_still_paid():
     created = client.post(
         "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
     ).get_json()
-    client.post(f"/bookings/{created['id']}/pay")
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
-    response = client.post(f"/bookings/{created['id']}/pay")
+    response = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
     assert response.status_code == 200
     assert response.get_json()["paid"] is True
@@ -685,10 +690,116 @@ def test_paying_twice_is_still_paid():
 def test_pay_unknown_booking_returns_404():
     client = make_client()
 
-    response = client.post("/bookings/999/pay")
+    response = client.post("/bookings/999/pay", json=VALID_CARD)
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
+
+def test_paying_with_a_valid_card_succeeds_and_shows_only_last4():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    response = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["paid"] is True
+    assert body["card_last4"] == "4242"
+    assert "card_number" not in body
+    assert "cvc" not in body
+
+def test_paying_with_a_missing_card_field_is_rejected_and_leaves_it_unpaid():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    for missing in ["card_number", "expiry", "cvc"]:
+        card = {k: v for k, v in VALID_CARD.items() if k != missing}
+        response = client.post(f"/bookings/{created['id']}/pay", json=card)
+
+        assert response.status_code == 400
+        assert "must" in response.get_json()["error"] or "format" in response.get_json()["error"]
+
+    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
+
+def test_paying_with_a_badly_formatted_card_is_rejected():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    cases = [
+        ({**VALID_CARD, "card_number": "4242"}, "card_number"),
+        ({**VALID_CARD, "card_number": "4242abcd42424242"}, "card_number"),
+        ({**VALID_CARD, "cvc": "12"}, "cvc"),
+        ({**VALID_CARD, "cvc": "abc"}, "cvc"),
+        ({**VALID_CARD, "expiry": "13/30"}, "expiry"),
+        ({**VALID_CARD, "expiry": "2030-12"}, "expiry"),
+    ]
+    for card, field in cases:
+        response = client.post(f"/bookings/{created['id']}/pay", json=card)
+
+        assert response.status_code == 400
+        assert field in response.get_json()["error"]
+
+    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
+
+def test_paying_with_an_expired_card_is_rejected():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    response = client.post(
+        f"/bookings/{created['id']}/pay", json={**VALID_CARD, "expiry": "01/20"}
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "card has expired"}
+    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
+
+def test_confirmation_page_pay_form_has_card_fields_and_shows_last4_once_paid():
+    client = make_client()
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
+
+    before = client.get("/bookings/1/confirmation").get_data(as_text=True)
+    assert 'name="card_number"' in before
+    assert 'name="expiry"' in before
+    assert 'name="cvc"' in before
+
+    client.post("/bookings/1/confirmation/pay", data=VALID_CARD)
+    after = client.get("/bookings/1/confirmation").get_data(as_text=True)
+
+    assert "card ending 4242" in after
+
+def test_confirmation_page_pay_with_an_invalid_card_shows_the_error():
+    client = make_client()
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
+
+    response = client.post(
+        "/bookings/1/confirmation/pay", data={**VALID_CARD, "cvc": "12"}
+    )
+    page = client.get(response.headers["Location"]).get_data(as_text=True)
+
+    assert "cvc must be 3 or 4 digits" in page
+    assert "Not paid yet" in page
+
+def test_paying_an_already_paid_booking_again_is_still_a_no_op():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+
+    # no card needed the second time - it's already paid
+    response = client.post(f"/bookings/{created['id']}/pay", json={})
+
+    assert response.status_code == 200
+    assert response.get_json()["paid"] is True
+    assert response.get_json()["card_last4"] == "4242"
 
 def test_failed_payment_leaves_the_booking_unpaid_and_unlock_returns_402():
     client = make_client()
@@ -697,7 +808,7 @@ def test_failed_payment_leaves_the_booking_unpaid_and_unlock_returns_402():
     ).get_json()
 
     response = client.post(
-        f"/bookings/{created['id']}/pay", json={"force_failure": True}
+        f"/bookings/{created['id']}/pay", json={**VALID_CARD, "force_failure": True}
     )
 
     assert response.status_code == 402
@@ -718,14 +829,14 @@ def test_failed_payment_brings_in_no_revenue_and_can_be_retried():
         "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
     ).get_json()
 
-    client.post(f"/bookings/{booking['id']}/pay", json={"force_failure": True})
+    client.post(f"/bookings/{booking['id']}/pay", json={**VALID_CARD, "force_failure": True})
     after_failure = client.get("/metrics").get_json()
 
     assert after_failure["revenue_cents"] == 0
     assert after_failure["unpaid_bookings"] == 1
 
     retry = client.post(
-        f"/bookings/{booking['id']}/pay", json={"force_failure": False}
+        f"/bookings/{booking['id']}/pay", json={**VALID_CARD, "force_failure": False}
     )
     after_retry = client.get("/metrics").get_json()
 
@@ -737,7 +848,7 @@ def test_failed_payment_brings_in_no_revenue_and_can_be_retried():
 def test_forcing_a_failure_on_an_unknown_booking_returns_404():
     client = make_client()
 
-    response = client.post("/bookings/999/pay", json={"force_failure": True})
+    response = client.post("/bookings/999/pay", json={**VALID_CARD, "force_failure": True})
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
@@ -747,10 +858,10 @@ def test_forcing_a_failure_on_a_paid_booking_leaves_it_paid():
     created = client.post(
         "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
     ).get_json()
-    client.post(f"/bookings/{created['id']}/pay")
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
     response = client.post(
-        f"/bookings/{created['id']}/pay", json={"force_failure": True}
+        f"/bookings/{created['id']}/pay", json={**VALID_CARD, "force_failure": True}
     )
 
     assert response.status_code == 200
@@ -766,8 +877,8 @@ def test_paying_twice_only_counts_revenue_once():
         "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
     ).get_json()
 
-    first = client.post(f"/bookings/{booking['id']}/pay")
-    second = client.post(f"/bookings/{booking['id']}/pay")
+    first = client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
+    second = client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
     metrics = client.get("/metrics").get_json()
 
     assert first.status_code == 200
@@ -791,7 +902,7 @@ def test_unlock_a_paid_booking_returns_an_access_code():
     created = client.post(
         "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
     ).get_json()
-    client.post(f"/bookings/{created['id']}/pay")
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
     response = client.post(f"/bookings/{created['id']}/unlock")
 
@@ -1046,7 +1157,7 @@ def test_user_id_stays_on_the_booking_through_pay_and_list():
     created = client.post(
         "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
     ).get_json()
-    paid = client.post(f"/bookings/{created['id']}/pay").get_json()
+    paid = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD).get_json()
 
     assert paid["user_id"] == user["id"]
     assert client.get("/bookings").get_json()["bookings"][0]["user_id"] == user["id"]
@@ -1100,7 +1211,7 @@ def test_my_bookings_page_shows_space_time_price_and_paid_status():
     assert "not paid" in unpaid_body
     assert ">Pay<" in unpaid_body
 
-    client.post(f"/bookings/{created['id']}/pay")
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
     paid_body = client.get("/bookings/mine").get_data(as_text=True)
     assert "not paid" not in paid_body
     assert ">Get unlock code<" in paid_body
@@ -1112,7 +1223,7 @@ def test_my_bookings_link_to_the_confirmation_page_for_the_unlock_code():
     created = client.post(
         "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
     ).get_json()
-    client.post(f"/bookings/{created['id']}/pay")
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
     body = client.get("/bookings/mine").get_data(as_text=True)
     assert f'href="/bookings/{created["id"]}/confirmation"' in body
@@ -1186,7 +1297,7 @@ def test_a_member_without_a_subscription_still_pays_once():
     ).get_json()
 
     assert created["paid"] is False
-    paid = client.post(f"/bookings/{created['id']}/pay").get_json()
+    paid = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD).get_json()
     assert paid["paid"] is True
 
 def test_subscription_matches_the_member_name_ignoring_case_and_spaces():
@@ -1251,7 +1362,7 @@ def test_metrics_splits_paid_and_unpaid_bookings():
     ).get_json()
     client.post("/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)})
     client.post("/spaces/1/bookings", json={"member": "flurina", **slot(5, 6)})
-    client.post(f"/bookings/{first['id']}/pay")
+    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
 
     body = client.get("/metrics").get_json()
 
@@ -1282,7 +1393,7 @@ def test_metrics_reports_revenue_from_paid_bookings():
     # unpaid bookings bring in nothing yet
     assert client.get("/metrics").get_json()["revenue_cents"] == 0
 
-    client.post(f"/bookings/{booking['id']}/pay")
+    client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
     response = client.get("/metrics")
 
     assert response.status_code == 200
@@ -1299,7 +1410,7 @@ def test_revenue_stays_the_same_when_the_space_price_changes_later():
     booking = client.post(
         "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
     ).get_json()
-    client.post(f"/bookings/{booking['id']}/pay")
+    client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
     assert client.get("/metrics").get_json()["revenue_cents"] == 500
 
     # PATCH can't change a price yet, so change it straight in the database
@@ -1312,7 +1423,7 @@ def test_revenue_stays_the_same_when_the_space_price_changes_later():
     later = client.post(
         "/spaces/2/bookings", json={"member": "annabel", **slot(3, 4)}
     ).get_json()
-    client.post(f"/bookings/{later['id']}/pay")
+    client.post(f"/bookings/{later['id']}/pay", json=VALID_CARD)
     assert client.get("/metrics").get_json()["revenue_cents"] == 2500
 
 def test_startup_fills_in_the_amount_on_bookings_made_before_the_column_existed():
@@ -1372,7 +1483,7 @@ def test_dashboard_shows_current_metrics():
     booking = client.post(
         "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
     ).get_json()
-    client.post(f"/bookings/{booking['id']}/pay")  # revenue only counts paid
+    client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)  # revenue only counts paid
 
     response = client.get("/dashboard")
 
@@ -1392,8 +1503,8 @@ def test_dashboard_shows_paid_and_unpaid_bookings_separately():
         "/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)}
     ).get_json()
     client.post("/spaces/1/bookings", json={"member": "flurina", **slot(5, 6)})
-    client.post(f"/bookings/{first['id']}/pay")
-    client.post(f"/bookings/{second['id']}/pay")
+    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
+    client.post(f"/bookings/{second['id']}/pay", json=VALID_CARD)
 
     body = client.get("/dashboard").get_data(as_text=True)
 
@@ -1707,7 +1818,7 @@ def test_changing_a_price_with_patch_only_affects_later_bookings():
     before = client.post(
         "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
     ).get_json()
-    client.post(f"/bookings/{before['id']}/pay")
+    client.post(f"/bookings/{before['id']}/pay", json=VALID_CARD)
     assert client.get("/metrics").get_json()["revenue_cents"] == 500
 
     client.patch("/spaces/2", json={"price_cents": 2000})
@@ -1718,7 +1829,7 @@ def test_changing_a_price_with_patch_only_affects_later_bookings():
     after = client.post(
         "/spaces/2/bookings", json={"member": "annabel", **slot(3, 4)}
     ).get_json()
-    client.post(f"/bookings/{after['id']}/pay")
+    client.post(f"/bookings/{after['id']}/pay", json=VALID_CARD)
     assert client.get("/metrics").get_json()["revenue_cents"] == 2500
 
 def test_update_unknown_space_returns_404():
