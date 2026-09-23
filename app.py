@@ -78,6 +78,13 @@ def get_connection(database_url: str) -> psycopg.Connection:
         cur.execute(
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount_cents INTEGER"
         )
+        # Links a booking to the account that was logged in when it was made
+        # (#134, the first concrete step of #86). NULL for a guest booking
+        # made while logged out, and for every booking made before this.
+        cur.execute(
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
+            "user_id INTEGER REFERENCES users (id)"
+        )
         # Bookings from before that column existed get the space's current price (best we have).
         cur.execute(
             "UPDATE bookings SET amount_cents = s.price_cents "
@@ -632,7 +639,7 @@ def create_app(
                 return jsonify(error="space not found"), 404
 
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings WHERE space_id = %s ORDER BY start_time",
                 (space_id,),
             )
@@ -682,12 +689,16 @@ def create_app(
             # Unpaid until POST /bookings/<id>/pay is called - unless the
             # member subscribes: then it is paid at once and costs nothing extra.
             subscribed = is_subscribed(cur, member)
+            # Linked to the account if one is logged in; NULL for a guest.
+            user_id = session.get("user_id")
             try:
                 cur.execute(
                     "INSERT INTO bookings "
-                    "(space_id, member, paid, start_time, end_time, amount_cents) "
-                    "VALUES (%s, %s, %s, %s, %s, %s) "
-                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
+                    "(space_id, member, paid, start_time, end_time, "
+                    "amount_cents, user_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                    "RETURNING id, space_id, member, paid, start_time, end_time, "
+                    "amount_cents, user_id",
                     (
                         space_id,
                         member,
@@ -695,6 +706,7 @@ def create_app(
                         start_time,
                         end_time,
                         0 if subscribed else space["price_cents"],
+                        user_id,
                     ),
                 )
             except (DeadlockDetected, ExclusionViolation):
@@ -829,7 +841,7 @@ def create_app(
     def list_bookings():
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings ORDER BY start_time"
             )
             rows = cur.fetchall()
@@ -840,7 +852,7 @@ def create_app(
     def find_booking(booking_id):
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -856,7 +868,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
+                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id",
                 (booking_id,),
             )
             row = cur.fetchone()
@@ -879,7 +891,7 @@ def create_app(
 
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -892,7 +904,7 @@ def create_app(
                     return {"error": "payment failed"}, 402
                 cur.execute(
                     "UPDATE bookings SET paid = TRUE WHERE id = %s "
-                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents",
+                    "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id",
                     (booking_id,),
                 )
                 row = cur.fetchone()
