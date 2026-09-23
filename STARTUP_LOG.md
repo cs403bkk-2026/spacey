@@ -1136,7 +1136,36 @@ copy-pasting the same four queries into a second route.
 - Action: #123 ("My bookings" page), now that login exists - but it needs bookings linked to a real user id first, not just a name.
 - Action: SECRET_KEY needs to be added to #47's environment variable list for the real deployment.
 
-#### Part 4: My bookings page for logged-in members (issue #123)
+#### Part 4: Book a space that's busy right now (issue #115)
+
+**People and contributions**
+- Annabel found this while clicking around and wrote it up. We all fixed it.
+
+**Progress and evidence**
+- The homepage used to hide the booking form while a space was in use, so a desk booked 10-11 couldn't be booked for 14-15 either. Now every space has a form, with its upcoming booked times listed underneath.
+- Also renamed the labels to "booked right now" / "free right now", since "available" next to a working form was confusing.
+- 5 new tests, 121 passed locally (3 runs). Also tried it in the browser: booked the desk for now, booked it again for later, and got the "already booked" message when picking a slot that clashes.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/150
+
+**Decisions and reasons**
+- No backend change needed at all - it already only rejected real overlaps. This was purely the page hiding an option that worked fine.
+
+**Attempts and problems**
+- Docker wasn't running on Gregory's laptop, so nothing worked until we started it. 
+- The PR has merge conflicts with Flurina's "My bookings" (#149), which landed while we were working. 
+
+**Shortcuts and unfinished work**
+- We list every upcoming booking with no limit. Fine with a handful, ugly once a space is busy.
+- Three old tests had to change because they checked that the form disappears - which is exactly the bug.
+
+**Help and tools**
+- Used Claude Code for the change and the tests, and to click through the running app. Gregory read the diff and ran the tests before pushing.
+
+**Next steps**
+- Action: merge main into the branch, re-run tests, get a review. Owner: Gregory.
+- We're three days from the handover - worth agreeing tomorrow what we're not doing, instead of picking up more issues.
+
+#### Part 5: My bookings page for logged-in members (issue #123)
 
 **People and contributions**
 - Assigned to Flurina - the direct payoff of #122 (login) and #134 (account-linked bookings).
