@@ -15,20 +15,48 @@ Requires Python 3.12 and Docker.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pytest
-flask --app app run --debug
+docker compose up db -d
+DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey pytest
+DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey flask --app app run --port 5001 --debug
 ```
 
-Open <http://127.0.0.1:5000/>. The deployment health response is at
-<http://127.0.0.1:5000/health>.
+Open <http://127.0.0.1:5001/>. The health check is at <http://127.0.0.1:5001/health>.
 
-To exercise the container instead:
+A few things that trip people up the first time:
+
+- **Port 5433, not 5432.** `compose.yaml` maps the database container to host port 5433, not
+  Postgres's usual 5432 - that's so it doesn't collide with a Postgres already installed on your
+  laptop (this happened to us). `DATABASE_URL` must say `5433` when running locally like above.
+- **Port 5001, not 5000.** On macOS, port 5000 is normally taken by AirPlay Receiver, so Flask's
+  default port fails silently or serves the wrong thing. Use `--port 5001` (or any other free
+  port) instead.
+- **If `flask run` exits with `Could not connect to the database`**, Postgres isn't running yet -
+  run `docker compose up db -d` first. See [Configuration](#configuration) below for every
+  variable this app reads.
+
+To exercise the full container stack instead (app + database together, closer to the deployed
+setup):
 
 ```sh
 docker compose up --build
 ```
 
 Then open <http://127.0.0.1:8000/>.
+
+## Configuration
+
+The app reads these environment variables. None are required to run locally - every one has a
+development-only default - but a real deployment should set all of them explicitly.
+
+| Variable            | What it's for                                                                 | Default (local only)                              |
+|----------------------|-------------------------------------------------------------------------------|-----------------------------------------------------|
+| `DATABASE_URL`       | Where to find Postgres.                                                       | `postgresql://spacey:spacey@localhost:5432/spacey`  |
+| `APP_REVISION`       | Shown by `GET /health`, so a deployment can confirm which commit is live.     | `local`                                              |
+| `RESET_DB_ON_START`  | If `true`, wipes all tables on startup. Used by tests; never set this in a real deployment or you will delete real data. | `false` |
+| `SECRET_KEY`         | Signs the login session cookie. **Must** be set to a real secret in any deployment - the default is public (it's printed right here in this file), so anyone could forge a session cookie claiming to be any user. The app would still run fine without it set, which is exactly what makes this easy to forget. | `dev-secret-key-not-for-production` |
+
+A missing or unreachable `DATABASE_URL` now fails fast at startup with a short, readable message
+instead of a raw stack trace.
 
 ## How changes reach the live system
 
@@ -43,7 +71,41 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## API reference
 
-Every JSON endpoint is documented in [openapi.yaml](openapi.yaml) (OpenAPI 3.0). Paste its contents into <https://editor.swagger.io> for a browsable version, or view it with any OpenAPI tool. A few routes render HTML pages for a browser instead (the space list, the booking form, the booking confirmation page, `/dashboard`) and are not part of that document.
+Every JSON endpoint is documented in detail in [openapi.yaml](openapi.yaml) (OpenAPI 3.0) - request
+bodies, response shapes, status codes. Paste its contents into <https://editor.swagger.io> for a
+browsable version, or view it with any OpenAPI tool.
+
+A few routes render an HTML page for a browser instead of JSON, and aren't part of that document:
+
+| Method | Path                              | What it does                                                        |
+|--------|------------------------------------|----------------------------------------------------------------------|
+| GET    | `/`                                 | Space list with a booking form on each; shows login state            |
+| GET    | `/register`, `/login`               | Plain sign-up / log-in forms                                         |
+| POST   | `/spaces/<id>/book`                 | Target of the homepage's booking form                                |
+| GET    | `/bookings/<id>/confirmation`       | Booking details, price, and Pay / Unlock buttons                     |
+| POST   | `/bookings/<id>/confirmation/pay`   | Target of the confirmation page's Pay button                         |
+| POST   | `/bookings/<id>/confirmation/unlock`| Target of the confirmation page's Unlock button                      |
+| GET    | `/dashboard`                        | Business metrics as a page                                           |
+
+Quick summary of the JSON API (see [openapi.yaml](openapi.yaml) for the full detail):
+
+| Method | Path                              | What it does                                                        |
+|--------|------------------------------------|----------------------------------------------------------------------|
+| GET    | `/health`                          | App + database health check                                          |
+| GET, POST | `/spaces`                       | List spaces / create a space                                         |
+| GET, PATCH, DELETE | `/spaces/<id>`          | Get, update, or delete one space                                     |
+| GET, POST | `/spaces/<id>/bookings`         | List a space's bookings / book it                                    |
+| GET    | `/bookings`                         | List every booking                                                   |
+| GET, DELETE | `/bookings/<id>`               | Get or cancel one booking                                            |
+| POST   | `/bookings/<id>/pay`                | Pay a booking (mocked; `force_failure: true` tests the failure path) |
+| POST   | `/bookings/<id>/unlock`             | Get the access code for a paid booking (mocked lock)                 |
+| POST   | `/members/<name>/subscribe`         | Mocked subscription; a subscriber's bookings are paid on creation    |
+| POST   | `/register`                         | Create an account (email + password, hashed)                        |
+| POST   | `/login`, `/logout`                 | Start or end a session                                               |
+| GET    | `/metrics`                          | Business metrics as JSON                                             |
+
+A booking made while logged in is linked to that account (`user_id` on the booking); one made
+while logged out is a guest booking (`user_id: null`).
 
 The live URL and deployment-log link will be added here before students are invited.
 

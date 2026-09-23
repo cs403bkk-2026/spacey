@@ -19,6 +19,8 @@ tags:
   - name: spaces
   - name: bookings
   - name: members
+  - name: accounts
+    description: Registration and login. See issue #120.
   - name: operations
     description: Health and business metrics.
 
@@ -410,6 +412,94 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: "member name must not be blank" }
 
+  /register:
+    post:
+      tags: [accounts]
+      summary: Create an account.
+      description: >
+        Also available as a plain HTML form at GET /register, for a browser.
+        Email is matched trimmed and lower-cased, and must be unique. The
+        password is hashed (werkzeug.security) and never stored or returned
+        as plain text.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, format: email, example: annabel@example.com }
+                password:
+                  type: string
+                  minLength: 8
+                  example: hunter22
+              required: [email, password]
+      responses:
+        "201":
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400":
+          description: >
+            enter a valid email address, or password must be at least 8
+            characters.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: That email is already registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "email is already registered" }
+
+  /login:
+    post:
+      tags: [accounts]
+      summary: Start a session.
+      description: >
+        Also available as a plain HTML form at GET /login. A wrong password
+        and an unknown email return the identical error, so a login attempt
+        can't be used to find out which emails are registered.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+              required: [email, password]
+      responses:
+        "200":
+          description: Logged in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          description: Wrong password, or no account with that email.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "invalid email or password" }
+
+  /logout:
+    post:
+      tags: [accounts]
+      summary: End the session.
+      description: Idempotent - logging out when already logged out does nothing.
+      responses:
+        "200":
+          description: Logged out (or already was).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
   /metrics:
     get:
       tags: [operations]
@@ -517,10 +607,6 @@ components:
 
     Booking:
       type: object
-      description: >
-        Note: bookings store an amount_cents column (the price charged at
-        booking time, see issue #78) but current responses do not include
-        it yet - that is issue #106, still open.
       properties:
         id: { type: integer, example: 1 }
         space_id: { type: integer, example: 1 }
@@ -528,7 +614,28 @@ components:
         paid: { type: boolean }
         start_time: { type: string, format: date-time, example: "2026-09-25T02:00:00+00:00" }
         end_time: { type: string, format: date-time, example: "2026-09-25T03:00:00+00:00" }
-      required: [id, space_id, member, paid, start_time, end_time]
+        amount_cents:
+          type: integer
+          description: >
+            What this booking was actually charged, fixed at the space's
+            price when it was made (see issue #78) - a later price change
+            does not affect it. 0 for a subscriber's booking.
+          example: 1500
+        user_id:
+          type: integer
+          nullable: true
+          description: >
+            The account that was logged in when the booking was made (see
+            issue #134), or null for a guest booking made while logged out.
+          example: 1
+      required: [id, space_id, member, paid, start_time, end_time, amount_cents, user_id]
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        email: { type: string, format: email, example: annabel@example.com }
+      required: [id, email]
 
     BookingList:
       type: object

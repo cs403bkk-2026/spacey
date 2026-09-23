@@ -1050,7 +1050,7 @@ copy-pasting the same four queries into a second route.
 
 
 
-#### Part 6: Rewrite README, document configuration (issues #46, #47)
+#### Part 4: Rewrite README, document configuration (issues #46, #47)
 
 **People and contributions**
 - Flurina picked deliberately because it's independent of the code still waiting on review (#135, #145, #146).
@@ -1079,3 +1079,57 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: update the endpoint reference framing once #135/#145 merge.
+#### Part 4: Link bookings to the account that made them (issue #134)
+
+**People and contributions**
+- Annabel assigned the issue to Flurina - unblocks #123, which needs a logged-in user's bookings.
+
+**Progress and evidence**
+- Bookings now store `user_id`, read from the session at the moment of booking. NULL for a guest booking (not logged in), which includes every past booking. Both the JSON API and the HTML form pick it up automatically, since both carry the session cookie. Included in every booking response, same pattern as `amount_cents`.
+- `pytest -q tests`: 116 passed, 5 runs in a row (111 existing, 5 new, 2 fixed for the new field). All 5 fail against the login-logout baseline.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/145
+
+**Decisions and reasons**
+- Did not make login mandatory to book - the issue only asks to link the account when there is one. Whether booking should require login is a bigger product call for #123/Annabel, not this issue's scope.
+- `user_id` is nullable on purpose: it's added to a table with existing rows, and a guest booking is a real, intended case, not an error state.
+
+**Attempts and problems**
+- Same two exact-dict tests broke again as with `amount_cents` in #106 - fixed the same way, by adding the new field to what they expect.
+
+**Shortcuts and unfinished work**
+- #123 ("My bookings" page) itself still isn't built.
+- Booking as a different name while logged in is still possible (the `member` field is still free text) - the account link doesn't stop that yet.
+
+**Help and tools**
+- Used Claude Code to add the column, wire it through `book_space`, and extend the 8 booking-response query sites. I confirmed the new tests fail against the login-logout baseline, re-ran the suite 5 times, and checked the whole flow with real cookies over HTTP (guest booking, JSON booking while logged in, form booking while logged in, the full list) before pushing.
+
+**Next steps**
+- Action: #123 ("My bookings" page), now that bookings carry a user id.
+#### Part 5: Log in and log out (issue #122)
+
+**People and contributions**
+- Direct next step in #120 after #121 (registration). Flurina implemented it.
+
+**Progress and evidence**
+- `POST /login` (JSON and HTML form) and `POST /logout`, using Flask's session. A wrong password and an unknown email return the identical 401 `invalid email or password`, so a failed attempt can't be used to find out who has an account. The homepage shows Register/Login when logged out, or the logged-in email with a Logout button.
+- `pytest -q tests`: 111 passed, 5 runs in a row (103 existing, 8 new). All 8 fail without the change.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/135
+
+**Decisions and reasons**
+- `SECRET_KEY` follows the same env-var-with-a-dev-default pattern as `DATABASE_URL`; a comment says a real deployment must set a real one.
+- The homepage nav clears a stale session (a user id that no longer exists, e.g. after a dev DB reset) instead of showing a broken logged-in state.
+
+**Attempts and problems**
+- First draft of two logout tests asserted a 200 JSON response, but a plain `client.post("/logout")` with no body isn't a JSON request, so it took the redirect branch and returned 302 - fixed by passing `json={}` where the test wants the JSON response, and keeping a separate test for the plain form/button path.
+
+**Shortcuts and unfinished work**
+- No "remember me" - the session is a plain cookie with no expiry set beyond Flask's default.
+- No rate limiting on login attempts.
+- Bookings still aren't linked to a user id, only a free-text member name - that's #86, and is what #123 ("My bookings" page) will need next.
+
+**Help and tools**
+- Used Claude Code to implement the routes and session handling and to write the tests. I confirmed the new tests fail against the register-branch baseline, re-ran the suite 5 times, and checked the whole flow with real cookies over HTTP (register, wrong password, unknown email, form login, the homepage reflecting the session, and the Logout button) before pushing.
+
+**Next steps**
+- Action: #123 ("My bookings" page), now that login exists - but it needs bookings linked to a real user id first, not just a name.
+- Action: SECRET_KEY needs to be added to #47's environment variable list for the real deployment.

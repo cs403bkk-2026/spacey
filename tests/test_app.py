@@ -1,6 +1,8 @@
 import threading
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app import create_app
 
 NOW = datetime.now(timezone.utc)
@@ -396,6 +398,7 @@ def test_create_booking_for_existing_space_succeeds():
         "member": "annabel",
         "paid": False,  # unpaid until /pay is called
         "amount_cents": 0,  # Founders Desk has no price set
+        "user_id": None,  # not logged in
         **slot(1, 2),
     }
 
@@ -514,6 +517,7 @@ def test_find_booking_returns_the_booking():
         "member": "annabel",
         "paid": False,
         "amount_cents": 0,
+        "user_id": None,
         **slot(1, 2),
     }
 
@@ -793,6 +797,161 @@ def test_homepage_links_to_register():
 
     assert 'href="/register"' in body
 
+def register(client, email="annabel@example.com", password="hunter22"):
+    return client.post("/register", json={"email": email, "password": password})
+
+def test_login_with_the_right_password_succeeds():
+    client = make_client()
+    register(client)
+
+    response = client.post(
+        "/login", json={"email": "Annabel@Example.com", "password": "hunter22"}
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"id": 1, "email": "annabel@example.com"}
+
+def test_login_with_the_wrong_password_is_rejected():
+    client = make_client()
+    register(client)
+
+    response = client.post(
+        "/login", json={"email": "annabel@example.com", "password": "wrong-password"}
+    )
+
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "invalid email or password"}
+
+def test_login_with_an_unknown_email_gives_the_identical_error():
+    client = make_client()
+    register(client)
+
+    known = client.post(
+        "/login", json={"email": "annabel@example.com", "password": "wrong-password"}
+    )
+    unknown = client.post(
+        "/login", json={"email": "nobody@example.com", "password": "hunter22"}
+    )
+
+    # a wrong password and an unregistered email must look the same,
+    # otherwise a login attempt can be used to find out who has an account
+    assert known.status_code == unknown.status_code == 401
+    assert known.get_json() == unknown.get_json()
+
+def test_logout_ends_the_session():
+    client = make_client()
+    register(client)
+    client.post("/login", json={"email": "annabel@example.com", "password": "hunter22"})
+    assert "Logged in as annabel@example.com" in client.get("/").get_data(as_text=True)
+
+    response = client.post("/logout", json={})
+
+    assert response.status_code == 200
+    assert "Logged in as" not in client.get("/").get_data(as_text=True)
+    assert 'href="/login"' in client.get("/").get_data(as_text=True)
+
+def test_logout_when_not_logged_in_is_a_no_op():
+    client = make_client()
+
+    response = client.post("/logout", json={})
+
+    assert response.status_code == 200
+
+def test_login_form_logs_in_and_redirects_to_the_homepage():
+    client = make_client()
+    register(client)
+
+    response = client.post(
+        "/login", data={"email": "annabel@example.com", "password": "hunter22"}
+    )
+
+    assert response.status_code == 302
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+    assert "Logged in as annabel@example.com" in body
+
+def test_login_form_with_wrong_password_shows_the_error():
+    client = make_client()
+    register(client)
+
+    response = client.post(
+        "/login", data={"email": "annabel@example.com", "password": "wrong-password"}
+    )
+
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+    assert "invalid email or password" in body
+
+def test_logout_button_on_the_homepage_actually_logs_out():
+    client = make_client()
+    register(client)
+    client.post("/login", json={"email": "annabel@example.com", "password": "hunter22"})
+
+    response = client.post("/logout")
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+
+    assert "Logged in as" not in body
+
+def login(client, email="annabel@example.com", password="hunter22"):
+    return client.post("/login", json={"email": email, "password": password})
+
+def test_a_booking_made_while_logged_in_is_linked_to_the_account():
+    client = make_client()
+    register(client)
+    user = login(client).get_json()
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    assert created["user_id"] == user["id"]
+    assert client.get(f"/bookings/{created['id']}").get_json()["user_id"] == user["id"]
+
+def test_a_guest_booking_has_no_user_id():
+    client = make_client()
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    assert created["user_id"] is None
+
+def test_logging_out_before_booking_leaves_it_unlinked():
+    client = make_client()
+    register(client)
+    login(client)
+    client.post("/logout", json={})
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    assert created["user_id"] is None
+
+def test_a_form_booking_while_logged_in_is_linked_to_the_account():
+    client = make_client()
+    register(client)
+    user = login(client).get_json()
+
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
+
+    assert client.get("/bookings/1").get_json()["user_id"] == user["id"]
+
+def test_user_id_stays_on_the_booking_through_pay_and_list():
+    client = make_client()
+    register(client)
+    user = login(client).get_json()
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    paid = client.post(f"/bookings/{created['id']}/pay").get_json()
+
+    assert paid["user_id"] == user["id"]
+    assert client.get("/bookings").get_json()["bookings"][0]["user_id"] == user["id"]
+    assert (
+        client.get("/spaces/1/bookings").get_json()["bookings"][0]["user_id"]
+        == user["id"]
+    )
+
 def test_subscribing_returns_an_active_subscription():
     client = make_client()
 
@@ -1008,6 +1167,16 @@ def test_health_reports_error_when_database_is_unreachable():
         "status": "error",
         "error": "database unreachable",
     }
+
+def test_startup_fails_fast_with_a_clear_message_for_a_bad_database_url():
+    bad_url = "postgresql://spacey:spacey@localhost:1/spacey"
+
+    with pytest.raises(SystemExit) as exc_info:
+        create_app(database_url=bad_url)
+
+    message = str(exc_info.value)
+    assert bad_url in message
+    assert "docker compose up db -d" in message
 
 def test_dashboard_shows_current_metrics():
     client = make_client()
