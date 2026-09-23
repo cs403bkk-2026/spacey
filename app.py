@@ -16,7 +16,17 @@ DATABASE_URL = os.getenv(
 
 
 def get_connection(database_url: str) -> psycopg.Connection:
-    conn = psycopg.connect(database_url, row_factory=dict_row, autocommit=True)
+    try:
+        conn = psycopg.connect(database_url, row_factory=dict_row, autocommit=True)
+    except psycopg.OperationalError as error:
+        # A raw psycopg traceback here is the first thing a new contributor
+        # sees if Postgres isn't running yet - fail fast with a clear pointer
+        # instead. See the Configuration section in README.md.
+        raise SystemExit(
+            f"Could not connect to the database at DATABASE_URL={database_url!r}\n"
+            f"{error}\n"
+            "Is Postgres running? Try: docker compose up db -d"
+        ) from None
     with conn.cursor() as cur:
         cur.execute(
             """
