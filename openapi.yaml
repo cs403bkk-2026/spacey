@@ -97,7 +97,9 @@ paths:
                   type: integer
                   minimum: 0
                   default: 0
-                  description: Charged once per booking, regardless of its length (see issue #80).
+                  description: >
+                    Per-hour rate. A booking is charged this rate times the
+                    hours booked, rounded to whole cents.
                   example: 1500
               required: [name, capacity]
       responses:
@@ -597,7 +599,10 @@ components:
         id: { type: integer, example: 1 }
         name: { type: string, example: Founders Desk }
         capacity: { type: integer, example: 1 }
-        price_cents: { type: integer, example: 0 }
+        price_cents:
+          type: integer
+          example: 0
+          description: Per-hour rate in cents.
         available:
           type: boolean
           description: >
@@ -617,9 +622,10 @@ components:
         amount_cents:
           type: integer
           description: >
-            What this booking was actually charged, fixed at the space's
-            price when it was made (see issue #78) - a later price change
-            does not affect it. 0 for a subscriber's booking.
+            What this booking was actually charged: the space's per-hour
+            rate times the hours booked, fixed at the price when it was
+            made (see issue #78) - a later price change does not affect
+            it. 0 for a subscriber's booking.
           example: 1500
         user_id:
           type: integer
