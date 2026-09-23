@@ -302,6 +302,27 @@ def create_app(
         reset_tables(app.db)
     seed_starter_space(app.db)
 
+    def render_account_nav(cur):
+        """Shared by every HTML page: Register/Log in when logged out, or
+        the logged-in email with My bookings and Log out when logged in."""
+        logged_out_nav = '<a href="/register">Register</a> · <a href="/login">Log in</a>'
+        user_id = session.get("user_id")
+        if user_id is None:
+            return logged_out_nav
+
+        cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+        user = cur.fetchone()
+        if user is None:
+            session.pop("user_id", None)  # stale session, e.g. after a DB reset
+            return logged_out_nav
+
+        return (
+            f"Logged in as {escape(user['email'])} · "
+            '<a href="/bookings/mine">My bookings</a> '
+            '<form method="post" action="/logout" style="display:inline">'
+            "<button type=\"submit\">Log out</button></form>"
+        )
+
     @app.get("/")
     def index():
         with app.db.cursor() as cur:
@@ -312,7 +333,6 @@ def create_app(
                 "WHERE start_time <= now() AND end_time > now()"
             )
             booked_ids = {row["space_id"] for row in cur.fetchall()}
-
             # Everything still to come, so members can see which times are
             # already taken before picking one.
             cur.execute(
@@ -322,21 +342,7 @@ def create_app(
             upcoming = {}
             for row in cur.fetchall():
                 upcoming.setdefault(row["space_id"], []).append(row)
-
-            account_nav = '<a href="/register">Register</a> · <a href="/login">Log in</a>'
-            user_id = session.get("user_id")
-            if user_id is not None:
-                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-                user = cur.fetchone()
-                if user is None:
-                    session.pop("user_id", None)  # stale session, e.g. after a DB reset
-                else:
-                    account_nav = (
-                        f"Logged in as {escape(user['email'])} "
-                        '<form method="post" action="/logout" '
-                        'style="display:inline"><button type="submit">'
-                        "Log out</button></form>"
-                    )
+            account_nav = render_account_nav(cur)
 
         def booking_form(space_id):
             return f"""
@@ -869,6 +875,53 @@ def create_app(
                 code=payload["access_code"],
             )
         )
+
+    @app.get("/bookings/mine")
+    def my_bookings():
+        """What a logged-in member sees: every booking they made, with a
+        link to each one's confirmation page (Pay or Unlock, whichever
+        applies)."""
+        if session.get("user_id") is None:
+            return redirect(url_for("login_form"))
+
+        with app.db.cursor() as cur:
+            cur.execute(
+                "SELECT b.id, b.paid, b.start_time, b.end_time, b.amount_cents, "
+                "s.name AS space_name "
+                "FROM bookings b JOIN spaces s ON s.id = b.space_id "
+                "WHERE b.user_id = %s ORDER BY b.start_time",
+                (session["user_id"],),
+            )
+            rows = cur.fetchall()
+            account_nav = render_account_nav(cur)
+
+        items = "".join(
+            f"""
+            <li>
+              {escape(row['space_name'])} -
+              {local_time(row['start_time'])} to {local_time(row['end_time'])}
+              (Bangkok time) -
+              ${row['amount_cents'] / 100:.2f} -
+              {"paid" if row['paid'] else "not paid"} -
+              <a href="/bookings/{row['id']}/confirmation">{"Get unlock code" if row['paid'] else "Pay"}</a>
+            </li>
+            """
+            for row in rows
+        )
+        if not rows:
+            items = "<li>No bookings yet.</li>"
+
+        return f"""
+        <html>
+          <head><title>Spacey - My bookings</title></head>
+          <body>
+            <h1>My bookings</h1>
+            <p>{account_nav}</p>
+            <ul>{items}</ul>
+            <p><a href="/">Back to spaces</a></p>
+          </body>
+        </html>
+        """
 
     @app.get("/bookings")
     def list_bookings():
