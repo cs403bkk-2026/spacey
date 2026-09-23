@@ -1191,3 +1191,31 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Gregory/Annabel to pick the next issue from the backlog.
+
+#### Part 6: Price bookings by the hour (issue #80)
+
+**People and contributions**
+- Annabel wrote the issue, Annabel and Gregory implemented it. PR is open, waiting for a review.
+
+**Progress and evidence**
+- A space's price is now a per-hour rate: booking 3 hours costs three times booking 1 hour. Before this, an 8-hour booking cost the same as a 1-hour one.
+- Subscribers still pay nothing, and the amount stays frozen on the booking, so changing a space's price later doesn't rewrite old ones.
+- 4 new tests, 131 passed (3 runs). Checked it over HTTP too: $15/hour space, 1 hour was $15.00, 3 hours $45.00.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/154
+
+**Decisions and reasons**
+- Did the maths in whole cents and rounded half up, so nobody gets charged a third of a cent.
+- Had to update openapi.yaml as well, it literally said the price is "charged once per booking, regardless of its length".
+
+**Attempts and problems**
+- Nothing broke. None of the old tests needed changing, because they all book exactly one hour, which still costs the rate.
+
+**Shortcuts and unfinished work**
+- Bookings made before today keep the flat amount they were charged, so revenue on the dashboard mixes old and new pricing. Real history, but it explains any weird before/after comparison.
+- Nothing checks that openapi.yaml is still true, or even valid - no test reads it. We only noticed the wrong description because we went looking.
+
+**Help and tools**
+- Used Claude Code for the change, the tests and the doc updates, and to try it against a running app. Gregory read the diff and ran the tests before pushing.
+
+**Next steps**
+- Action: get #154 reviewed and merged. Owner: Flurina or Annabel.
