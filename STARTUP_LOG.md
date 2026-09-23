@@ -1048,8 +1048,6 @@ copy-pasting the same four queries into a second route.
 - Action: #122 (log in and log out), now that accounts exist. Owner: whoever's next.
 - Action: Annabel to confirm the hashing decision, since the issue itself raised it as a question.
 
-
-
 #### Part 4: Rewrite README, document configuration (issues #46, #47)
 
 **People and contributions**
@@ -1079,7 +1077,8 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: update the endpoint reference framing once #135/#145 merge.
-#### Part 4: Link bookings to the account that made them (issue #134)
+
+#### Part 5: Link bookings to the account that made them (issue #134)
 
 **People and contributions**
 - Annabel assigned the issue to Flurina - unblocks #123, which needs a logged-in user's bookings.
@@ -1105,7 +1104,7 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: #123 ("My bookings" page), now that bookings carry a user id.
-#### Part 5: Log in and log out (issue #122)
+#### Part 6: Log in and log out (issue #122)
 
 **People and contributions**
 - Direct next step in #120 after #121 (registration). Flurina implemented it.
@@ -1134,7 +1133,7 @@ copy-pasting the same four queries into a second route.
 - Action: #123 ("My bookings" page), now that login exists - but it needs bookings linked to a real user id first, not just a name.
 - Action: SECRET_KEY needs to be added to #47's environment variable list for the real deployment.
 
-#### Part 6: Book a space that's busy right now (issue #115)
+#### Part 7: Book a space that's busy right now (issue #115)
 
 **People and contributions**
 - Annabel found this while clicking around and wrote it up. We all fixed it.
@@ -1162,3 +1161,29 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: merge main into the branch, re-run tests, get a review. Owner: Gregory.
 - We're three days from the handover - worth agreeing tomorrow what we're not doing, instead of picking up more issues.
+#### Part 8: My bookings page for logged-in members (issue #123)
+
+**People and contributions**
+- Assigned to Flurina - the direct payoff of #122 (login) and #134 (account-linked bookings).
+
+**Progress and evidence**
+- `GET /bookings/mine` lists the logged-in user's bookings (space, times, price, paid/unpaid), each linking to its confirmation page for Pay or the unlock code. Logged-out visitors are redirected to `/login`.
+- `pytest`: 123 passed, 5 runs in a row (117 existing, 6 new). All 6 fail without the change.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/149
+
+**Decisions and reasons**
+- Reused the existing confirmation page for Pay/Unlock rather than duplicating that logic on the new page.
+- The Register/Login vs. logged-in nav was about to be duplicated a third time, so it's now a shared `render_account_nav` helper - also added the "My bookings" link there, so the page is actually reachable, not just an unlinked route.
+
+**Attempts and problems**
+- First version of the item template split the unlock/pay link across multiple lines in the f-string, which put stray whitespace between `>` and the link text and broke a substring assertion in the test - fixed by keeping that one link on a single line.
+
+**Shortcuts and unfinished work**
+- No pagination - fine for now, not for 21 more people's worth of bookings.
+- Still uses the confirmation page's existing Pay/Unlock actions rather than doing anything inline.
+
+**Help and tools**
+- Used Claude Code to implement the route, the shared nav helper, and the tests. I confirmed the new tests fail without the change, re-ran the suite 5 times, and checked the whole flow with two separate real logged-in sessions over HTTP (cookie isolation, the Pay/unlock-code link switching after paying, and the homepage nav) before pushing.
+
+**Next steps**
+- Gregory/Annabel to pick the next issue from the backlog.

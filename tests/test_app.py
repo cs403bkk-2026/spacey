@@ -30,10 +30,10 @@ def test_homepage_lists_spaces_with_availability():
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Founders Desk" in body
-    assert "available" in body
+    assert "free right now" in body
     assert "Meeting Room A" in body
     assert "$15.00" in body
-    assert "booked" in body
+    assert "booked right now" in body
 
 BANGKOK = timezone(timedelta(hours=7))
 
@@ -50,16 +50,62 @@ def form_slot(start_hours, end_hours):
         ),
     }
 
-def test_homepage_shows_a_booking_form_only_for_available_spaces():
+def test_homepage_shows_a_booking_form_for_every_space():
     client = make_client()
     client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
     client.post("/spaces/2/bookings", json={"member": "gregory", **slot(-1, 1)})
 
     body = client.get("/").get_data(as_text=True)
 
-    assert '<form method="post" action="/spaces/1/book">' in body
     assert 'name="member"' in body
-    assert body.count("<form") == 1  # space 2 is booked right now, so no form
+    # space 2 is booked right now, but you can still book it for later
+    assert '<form method="post" action="/spaces/1/book">' in body
+    assert '<form method="post" action="/spaces/2/book">' in body
+
+def test_homepage_lists_the_upcoming_booked_times_of_a_space():
+    client = make_client()
+    client.post(
+        "/spaces/1/bookings",
+        json={
+            "member": "gregory",
+            "start_time": "2030-01-01T10:00:00+07:00",
+            "end_time": "2030-01-01T11:00:00+07:00",
+        },
+    )
+
+    body = client.get("/").get_data(as_text=True)
+
+    assert "Already booked:" in body
+    assert "2030-01-01 10:00 to 2030-01-01 11:00" in body
+
+def test_homepage_says_when_a_space_has_no_bookings_coming_up():
+    client = make_client()
+
+    body = client.get("/").get_data(as_text=True)
+
+    assert "No bookings coming up." in body
+
+def test_can_book_a_later_slot_while_the_space_is_booked_right_now():
+    client = make_client()
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(-1, 1)})
+
+    response = client.post(
+        "/spaces/1/book", data={"member": "gregory", **form_slot(4, 5)}
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/bookings/2/confirmation"
+
+def test_booking_an_overlapping_slot_shows_the_already_booked_message():
+    client = make_client()
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 3)})
+
+    response = client.post(
+        "/spaces/1/book", data={"member": "gregory", **form_slot(2, 4)}
+    )
+
+    body = client.get(response.headers["Location"]).get_data(as_text=True)
+    assert "space is already booked for that time" in body
 
 def test_booking_through_the_form_makes_the_space_unavailable():
     client = make_client()
@@ -72,8 +118,9 @@ def test_booking_through_the_form_makes_the_space_unavailable():
     assert response.headers["Location"] == "/bookings/1/confirmation"
 
     body = client.get("/").get_data(as_text=True)
-    assert "booked" in body
-    assert "<form" not in body  # the only space is taken now
+    assert "booked right now" in body
+    # still bookable for a later slot, so the form stays
+    assert '<form method="post" action="/spaces/1/book">' in body
 
     booking = client.get("/bookings/1").get_json()
     assert booking["member"] == "annabel"
