@@ -1,6 +1,8 @@
 import threading
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app import create_app
 
 NOW = datetime.now(timezone.utc)
@@ -1165,6 +1167,16 @@ def test_health_reports_error_when_database_is_unreachable():
         "status": "error",
         "error": "database unreachable",
     }
+
+def test_startup_fails_fast_with_a_clear_message_for_a_bad_database_url():
+    bad_url = "postgresql://spacey:spacey@localhost:1/spacey"
+
+    with pytest.raises(SystemExit) as exc_info:
+        create_app(database_url=bad_url)
+
+    message = str(exc_info.value)
+    assert bad_url in message
+    assert "docker compose up db -d" in message
 
 def test_dashboard_shows_current_metrics():
     client = make_client()
