@@ -313,6 +313,16 @@ def create_app(
             )
             booked_ids = {row["space_id"] for row in cur.fetchall()}
 
+            # Everything still to come, so members can see which times are
+            # already taken before picking one.
+            cur.execute(
+                "SELECT space_id, start_time, end_time FROM bookings "
+                "WHERE end_time > now() ORDER BY start_time"
+            )
+            upcoming = {}
+            for row in cur.fetchall():
+                upcoming.setdefault(row["space_id"], []).append(row)
+
             account_nav = '<a href="/register">Register</a> · <a href="/login">Log in</a>'
             user_id = session.get("user_id")
             if user_id is not None:
@@ -338,13 +348,26 @@ def create_app(
               </form>
             """
 
+        def booked_times(space_id):
+            bookings = upcoming.get(space_id, [])
+            if not bookings:
+                return "<p>No bookings coming up.</p>"
+
+            slots = "".join(
+                f"<li>{local_time(b['start_time'])} to "
+                f"{local_time(b['end_time'])}</li>"
+                for b in bookings
+            )
+            return f"<p>Already booked:</p><ul>{slots}</ul>"
+
         items = "".join(
             f"""
             <li>
               {escape(row['name'])} - capacity {row['capacity']},
               ${row['price_cents'] / 100:.2f}
-              - {"booked" if row['id'] in booked_ids else "available"}
-              {"" if row['id'] in booked_ids else booking_form(row['id'])}
+              - {"booked right now" if row['id'] in booked_ids else "free right now"}
+              {booked_times(row['id'])}
+              {booking_form(row['id'])}
             </li>
             """
             for row in rows
