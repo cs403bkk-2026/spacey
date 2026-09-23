@@ -186,6 +186,14 @@ def parse_form_time(value) -> datetime | None:
     return parsed
 
 
+def amount_for(price_cents: int, start_time: datetime, end_time: datetime) -> int:
+    """A space's price_cents is a per-hour rate, so a 3-hour booking costs
+    three times a 1-hour one. Integer maths, rounding half up, so we never
+    hand out fractions of a cent."""
+    seconds = int((end_time - start_time).total_seconds())
+    return (price_cents * seconds + 1800) // 3600
+
+
 def is_valid_name(name) -> bool:
     return isinstance(name, str) and name.strip() != ""
 
@@ -370,7 +378,7 @@ def create_app(
             f"""
             <li>
               {escape(row['name'])} - capacity {row['capacity']},
-              ${row['price_cents'] / 100:.2f}
+              ${row['price_cents'] / 100:.2f} per hour
               - {"booked right now" if row['id'] in booked_ids else "free right now"}
               {booked_times(row['id'])}
               {booking_form(row['id'])}
@@ -744,7 +752,11 @@ def create_app(
                         subscribed,
                         start_time,
                         end_time,
-                        0 if subscribed else space["price_cents"],
+                        0
+                        if subscribed
+                        else amount_for(
+                            space["price_cents"], start_time, end_time
+                        ),
                         user_id,
                     ),
                 )

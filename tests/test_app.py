@@ -202,6 +202,62 @@ def test_confirmation_page_shows_the_total_before_and_after_paying():
     after = client.get("/bookings/1/confirmation").get_data(as_text=True)
     assert "Paid. Total: $15.00" in after
 
+def test_three_hours_cost_three_times_one_hour():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+
+    one_hour = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    three_hours = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(4, 7)}
+    ).get_json()
+
+    assert one_hour["amount_cents"] == 1500
+    assert three_hours["amount_cents"] == 4500
+
+def test_half_an_hour_costs_half_the_hourly_rate():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+
+    booking = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 1.5)}
+    ).get_json()
+
+    assert booking["amount_cents"] == 750
+
+def test_an_uneven_duration_is_rounded_to_whole_cents():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1000},
+    )
+
+    # 20 minutes at $10.00/hour is 333.33 cents
+    booking = client.post(
+        "/spaces/2/bookings",
+        json={"member": "annabel", **slot(1, 1 + 1 / 3)},
+    ).get_json()
+
+    assert booking["amount_cents"] == 333
+
+def test_homepage_shows_the_price_as_an_hourly_rate():
+    client = make_client()
+    client.post(
+        "/spaces",
+        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    )
+
+    body = client.get("/").get_data(as_text=True)
+
+    assert "$15.00 per hour" in body
+
 def test_booking_responses_include_the_amount_charged():
     client = make_client()
     client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500})
