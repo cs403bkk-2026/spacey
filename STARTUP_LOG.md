@@ -1048,7 +1048,9 @@ copy-pasting the same four queries into a second route.
 - Action: #122 (log in and log out), now that accounts exist. Owner: whoever's next.
 - Action: Annabel to confirm the hashing decision, since the issue itself raised it as a question.
 
-#### Part 4: Rewrite README, document configuration (issues #46, #47)
+## 2026-09-23 - Day 10
+
+#### Part 1: Rewrite README, document configuration (issues #46, #47)
 
 **People and contributions**
 - Flurina picked deliberately because it's independent of the code still waiting on review (#135, #145, #146).
@@ -1078,7 +1080,7 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: update the endpoint reference framing once #135/#145 merge.
 
-#### Part 5: Link bookings to the account that made them (issue #134)
+#### Part 2: Link bookings to the account that made them (issue #134)
 
 **People and contributions**
 - Annabel assigned the issue to Flurina - unblocks #123, which needs a logged-in user's bookings.
@@ -1104,7 +1106,8 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: #123 ("My bookings" page), now that bookings carry a user id.
-#### Part 6: Log in and log out (issue #122)
+
+#### Part 3: Log in and log out (issue #122)
 
 **People and contributions**
 - Direct next step in #120 after #121 (registration). Flurina implemented it.
@@ -1133,7 +1136,7 @@ copy-pasting the same four queries into a second route.
 - Action: #123 ("My bookings" page), now that login exists - but it needs bookings linked to a real user id first, not just a name.
 - Action: SECRET_KEY needs to be added to #47's environment variable list for the real deployment.
 
-#### Part 7: My bookings page for logged-in members (issue #123)
+#### Part 4: My bookings page for logged-in members (issue #123)
 
 **People and contributions**
 - Assigned to Flurina - the direct payoff of #122 (login) and #134 (account-linked bookings).
