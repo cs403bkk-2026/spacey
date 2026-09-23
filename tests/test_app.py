@@ -396,6 +396,7 @@ def test_create_booking_for_existing_space_succeeds():
         "member": "annabel",
         "paid": False,  # unpaid until /pay is called
         "amount_cents": 0,  # Founders Desk has no price set
+        "user_id": None,  # not logged in
         **slot(1, 2),
     }
 
@@ -514,6 +515,7 @@ def test_find_booking_returns_the_booking():
         "member": "annabel",
         "paid": False,
         "amount_cents": 0,
+        "user_id": None,
         **slot(1, 2),
     }
 
@@ -885,6 +887,68 @@ def test_logout_button_on_the_homepage_actually_logs_out():
     body = client.get(response.headers["Location"]).get_data(as_text=True)
 
     assert "Logged in as" not in body
+
+def login(client, email="annabel@example.com", password="hunter22"):
+    return client.post("/login", json={"email": email, "password": password})
+
+def test_a_booking_made_while_logged_in_is_linked_to_the_account():
+    client = make_client()
+    register(client)
+    user = login(client).get_json()
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    assert created["user_id"] == user["id"]
+    assert client.get(f"/bookings/{created['id']}").get_json()["user_id"] == user["id"]
+
+def test_a_guest_booking_has_no_user_id():
+    client = make_client()
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    assert created["user_id"] is None
+
+def test_logging_out_before_booking_leaves_it_unlinked():
+    client = make_client()
+    register(client)
+    login(client)
+    client.post("/logout", json={})
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    assert created["user_id"] is None
+
+def test_a_form_booking_while_logged_in_is_linked_to_the_account():
+    client = make_client()
+    register(client)
+    user = login(client).get_json()
+
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
+
+    assert client.get("/bookings/1").get_json()["user_id"] == user["id"]
+
+def test_user_id_stays_on_the_booking_through_pay_and_list():
+    client = make_client()
+    register(client)
+    user = login(client).get_json()
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    paid = client.post(f"/bookings/{created['id']}/pay").get_json()
+
+    assert paid["user_id"] == user["id"]
+    assert client.get("/bookings").get_json()["bookings"][0]["user_id"] == user["id"]
+    assert (
+        client.get("/spaces/1/bookings").get_json()["bookings"][0]["user_id"]
+        == user["id"]
+    )
 
 def test_subscribing_returns_an_active_subscription():
     client = make_client()
