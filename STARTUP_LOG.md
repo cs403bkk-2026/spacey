@@ -1219,3 +1219,31 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Action: get #154 reviewed and merged. Owner: Flurina or Annabel.
+
+#### Part 7: Require card details when paying (issue #119)
+
+**People and contributions**
+- Annabel assigned this issue to Flurina. It completes the payment flow for the demo.
+
+**Progress and evidence**
+- `POST /bookings/<id>/pay` and the confirmation page's Pay form now require `card_number`, `expiry` (MM/YY) and `cvc`. Checked for shape only (mocked - no real Luhn/network check): right length, digits only, expiry not in the past. Bad or missing fields return 400 and leave the booking unpaid. Only the last 4 digits are ever stored (`card_last4`) or returned - the full number and CVC are never persisted.
+- `pytest`: 138 passed, 5 runs in a row (131 existing, 7 new). All 7 fail against unmodified main.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/156
+
+**Decisions and reasons**
+- The issue explicitly criticized the Pay form having no fields at all, so this had to reach the HTML confirmation page too, not just the JSON API - the form now has real inputs.
+- Paying an already-paid booking stays a no-op and needs no card, matching the existing retry-safe behavior.
+- Cleaned up `mark_booking_paid` to always return `(payload, status)` while adding the new validation branch, instead of the mixed row/None/tuple return type left over from an earlier bug fix.
+
+**Attempts and problems**
+- Card validation touches every test that pays a booking - about 26 call sites across the suite needed a shared `VALID_CARD` constant added. Mechanical but large; used a script for the bulk of it, then fixed the handful of multi-line calls it missed by hand.
+
+**Shortcuts and unfinished work**
+- No real card network check (Luhn, issuer, etc.) - this is still a mock, matching the issue's scope.
+- The confirmation page shows "card ending 4242" but there's no styling on the new input fields.
+
+**Help and tools**
+- Used Claude Code to design the validation, wire it through both the JSON and HTML paths, update openapi.yaml, and update the ~26 existing tests. I confirmed the 7 new tests fail against unmodified main, re-ran the suite 5 times, and checked the whole flow over real HTTP (missing field, expired card, valid payment, and that only the last 4 digits ever show up anywhere) before pushing.
+
+**Next steps**
+- Gregory/Annabel to pick the next issue from the backlog.
