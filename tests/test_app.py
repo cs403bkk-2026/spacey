@@ -952,6 +952,87 @@ def test_user_id_stays_on_the_booking_through_pay_and_list():
         == user["id"]
     )
 
+def test_logged_out_visitors_are_sent_to_the_login_page():
+    client = make_client()
+
+    response = client.get("/bookings/mine")
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/login"
+
+def test_my_bookings_page_lists_only_the_logged_in_users_bookings():
+    client = make_client()
+    client.post(
+        "/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500}
+    )
+    register(client, email="annabel@example.com")
+    register(client, email="gregory@example.com")
+
+    login(client, email="annabel@example.com")
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)})
+    client.post("/logout", json={})
+
+    login(client, email="gregory@example.com")
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(3, 4)})
+
+    body = client.get("/bookings/mine").get_data(as_text=True)
+
+    assert "Meeting Room A" in body
+    assert "Founders Desk" not in body  # that one is annabel's, not gregory's
+
+def test_my_bookings_page_shows_space_time_price_and_paid_status():
+    client = make_client()
+    client.post(
+        "/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500}
+    )
+    register(client)
+    login(client)
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    unpaid_body = client.get("/bookings/mine").get_data(as_text=True)
+    assert "Founders Desk" in unpaid_body
+    assert "$0.00" in unpaid_body
+    assert "not paid" in unpaid_body
+    assert ">Pay<" in unpaid_body
+
+    client.post(f"/bookings/{created['id']}/pay")
+    paid_body = client.get("/bookings/mine").get_data(as_text=True)
+    assert "not paid" not in paid_body
+    assert ">Get unlock code<" in paid_body
+
+def test_my_bookings_link_to_the_confirmation_page_for_the_unlock_code():
+    client = make_client()
+    register(client)
+    login(client)
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay")
+
+    body = client.get("/bookings/mine").get_data(as_text=True)
+    assert f'href="/bookings/{created["id"]}/confirmation"' in body
+
+def test_my_bookings_page_when_there_are_none_says_so():
+    client = make_client()
+    register(client)
+    login(client)
+
+    body = client.get("/bookings/mine").get_data(as_text=True)
+
+    assert "No bookings yet." in body
+
+def test_homepage_links_to_my_bookings_only_when_logged_in():
+    client = make_client()
+
+    assert 'href="/bookings/mine"' not in client.get("/").get_data(as_text=True)
+
+    register(client)
+    login(client)
+
+    assert 'href="/bookings/mine"' in client.get("/").get_data(as_text=True)
+
 def test_subscribing_returns_an_active_subscription():
     client = make_client()
 
