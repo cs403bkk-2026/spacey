@@ -1346,14 +1346,13 @@ def test_metrics_reports_spaces_bookings_and_members():
     response = client.get("/metrics")
 
     assert response.status_code == 200
-    assert response.get_json() == {
-        "spaces": 2,
-        "bookings": 2,
-        "paid_bookings": 0,
-        "unpaid_bookings": 2,
-        "members": 2,
-        "revenue_cents": 0,
-    }
+    body = response.get_json()
+    assert body["spaces"] == 2
+    assert body["bookings"] == 2
+    assert body["paid_bookings"] == 0
+    assert body["unpaid_bookings"] == 2
+    assert body["members"] == 2
+    assert body["revenue_cents"] == 0
 
 def test_metrics_splits_paid_and_unpaid_bookings():
     client = make_client()
@@ -1399,6 +1398,124 @@ def test_metrics_reports_revenue_from_paid_bookings():
     assert response.status_code == 200
     body = response.get_json()
     assert body["revenue_cents"] == 1500
+
+def test_utilization_over_the_next_7_days():
+    client = make_client()
+    # Founders Desk (the only space) is booked for a clean 24 hours,
+    # fully inside the 7-day (168h) window.
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 25)})
+
+    body = client.get("/metrics").get_json()
+
+    assert body["utilization"] == pytest.approx(24 / 168)
+
+def test_utilization_ignores_bookings_outside_the_next_7_days():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(200, 201)})
+
+    body = client.get("/metrics").get_json()
+
+    assert body["utilization"] == 0.0
+
+def test_utilization_is_zero_with_no_spaces():
+    client = make_client()
+    client.delete("/spaces/1")  # the only space, unbooked, so deletable
+
+    body = client.get("/metrics").get_json()
+
+    assert body["spaces"] == 0
+    assert body["utilization"] == 0.0
+
+def test_repeat_member_rate():
+    client = make_client()
+    client.post("/spaces", json={"name": "Room B", "capacity": 4})
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)})
+    client.post("/spaces/2/bookings", json={"member": "annabel", **slot(3, 4)})
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(5, 6)})
+
+    body = client.get("/metrics").get_json()
+
+    assert body["members"] == 2
+    assert body["repeat_member_rate"] == pytest.approx(1 / 2)  # only annabel repeats
+
+def test_repeat_member_rate_is_zero_with_no_bookings():
+    client = make_client()
+
+    body = client.get("/metrics").get_json()
+
+    assert body["repeat_member_rate"] == 0.0
+
+def test_payment_conversion():
+    client = make_client()
+    first = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post("/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)})
+    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
+
+    body = client.get("/metrics").get_json()
+
+    assert body["payment_conversion"] == pytest.approx(0.5)
+
+def test_payment_conversion_is_zero_with_no_bookings():
+    client = make_client()
+
+    body = client.get("/metrics").get_json()
+
+    assert body["payment_conversion"] == 0.0
+
+def test_average_revenue_per_paid_booking():
+    client = make_client()
+    client.post(
+        "/spaces", json={"name": "Room B", "capacity": 4, "price_cents": 1000}
+    )
+    first = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    second = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(3, 4)}
+    ).get_json()
+    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
+    client.post(f"/bookings/{second['id']}/pay", json=VALID_CARD)
+
+    body = client.get("/metrics").get_json()
+
+    assert body["avg_revenue_cents_per_paid_booking"] == 1000
+
+def test_average_revenue_per_paid_booking_is_zero_with_no_paid_bookings():
+    client = make_client()
+
+    body = client.get("/metrics").get_json()
+
+    assert body["avg_revenue_cents_per_paid_booking"] == 0
+
+def test_revenue_by_space():
+    client = make_client()
+    client.post(
+        "/spaces", json={"name": "Room B", "capacity": 4, "price_cents": 1000}
+    )
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)})
+    paid = client.post(
+        "/spaces/2/bookings", json={"member": "gregory", **slot(3, 4)}
+    ).get_json()
+    client.post(f"/bookings/{paid['id']}/pay", json=VALID_CARD)
+
+    body = client.get("/metrics").get_json()
+
+    by_id = {row["id"]: row for row in body["revenue_by_space"]}
+    assert by_id[1]["name"] == "Founders Desk"
+    assert by_id[1]["revenue_cents"] == 0  # unpaid
+    assert by_id[2]["name"] == "Room B"
+    assert by_id[2]["revenue_cents"] == 1000
+
+def test_revenue_by_space_includes_a_space_with_no_bookings():
+    client = make_client()
+
+    body = client.get("/metrics").get_json()
+
+    assert body["revenue_by_space"] == [
+        {"id": 1, "name": "Founders Desk", "revenue_cents": 0}
+    ]
 
 def test_revenue_stays_the_same_when_the_space_price_changes_later():
     app = create_app(reset_on_start=True)
@@ -1520,6 +1637,57 @@ def test_dashboard_with_no_bookings_shows_zero_paid_and_unpaid():
 
     assert "Paid bookings: 0" in body
     assert "Unpaid bookings: 0" in body
+
+def test_dashboard_describes_the_product_and_notes_the_data_source():
+    client = make_client()
+
+    body = client.get("/dashboard").get_data(as_text=True)
+
+    assert "space booking system" in body
+    assert "test and load-test data" in body
+
+def test_dashboard_shows_the_new_investor_metrics():
+    client = make_client()
+    client.post(
+        "/spaces", json={"name": "Room B", "capacity": 4, "price_cents": 1000}
+    )
+    first = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(3, 4)})
+    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
+
+    body = client.get("/dashboard").get_data(as_text=True)
+
+    assert "Utilization" in body
+    assert "Repeat member rate" in body
+    assert "Payment conversion: 50.0%" in body
+    assert "Avg revenue per paid booking: $10.00" in body
+
+def test_dashboard_shows_a_revenue_bar_for_each_space():
+    client = make_client()
+    client.post(
+        "/spaces", json={"name": "Room B", "capacity": 4, "price_cents": 1000}
+    )
+    paid = client.post(
+        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{paid['id']}/pay", json=VALID_CARD)
+
+    body = client.get("/dashboard").get_data(as_text=True)
+
+    assert "Founders Desk" in body
+    assert "Room B" in body
+    assert "$10.00" in body
+
+def test_dashboard_with_no_spaces_shows_no_bar_chart_crash():
+    client = make_client()
+    client.delete("/spaces/1")
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert "No spaces yet." in response.get_data(as_text=True)
 
 def test_delete_unbooked_space_removes_it():
     client = make_client()
