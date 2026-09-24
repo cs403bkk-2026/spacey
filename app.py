@@ -298,6 +298,48 @@ def compute_metrics(cur) -> dict:
     )
     revenue_cents = cur.fetchone()["total"]
 
+    # Booked hours over the next 7 days, clipped to that window, across all
+    # spaces - same overlap rule used everywhere else (starts before the
+    # window ends AND ends after the window starts).
+    cur.execute(
+        "SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("
+        "LEAST(end_time, now() + interval '7 days') - GREATEST(start_time, now())"
+        ")) / 3600.0), 0) AS hours "
+        "FROM bookings "
+        "WHERE start_time < now() + interval '7 days' AND end_time > now()"
+    )
+    booked_hours = float(cur.fetchone()["hours"])
+    available_hours = total_spaces * 7 * 24
+    utilization = booked_hours / available_hours if available_hours > 0 else 0.0
+
+    cur.execute(
+        "SELECT COUNT(*) AS count FROM ("
+        "SELECT member FROM bookings GROUP BY member HAVING COUNT(*) > 1"
+        ") repeat_members"
+    )
+    repeat_members = cur.fetchone()["count"]
+    repeat_member_rate = repeat_members / total_members if total_members > 0 else 0.0
+
+    payment_conversion = (
+        booking_counts["paid"] / booking_counts["total"]
+        if booking_counts["total"] > 0
+        else 0.0
+    )
+
+    avg_revenue_cents_per_paid_booking = (
+        round(revenue_cents / booking_counts["paid"])
+        if booking_counts["paid"] > 0
+        else 0
+    )
+
+    cur.execute(
+        "SELECT s.id, s.name, "
+        "COALESCE(SUM(b.amount_cents) FILTER (WHERE b.paid), 0) AS revenue_cents "
+        "FROM spaces s LEFT JOIN bookings b ON b.space_id = s.id "
+        "GROUP BY s.id, s.name ORDER BY s.id"
+    )
+    revenue_by_space = cur.fetchall()
+
     return {
         "spaces": total_spaces,
         "bookings": booking_counts["total"],
@@ -305,6 +347,11 @@ def compute_metrics(cur) -> dict:
         "unpaid_bookings": booking_counts["unpaid"],
         "members": total_members,
         "revenue_cents": revenue_cents,
+        "utilization": utilization,
+        "repeat_member_rate": repeat_member_rate,
+        "payment_conversion": payment_conversion,
+        "avg_revenue_cents_per_paid_booking": avg_revenue_cents_per_paid_booking,
+        "revenue_by_space": revenue_by_space,
     }
 
 def reset_tables(conn: psycopg.Connection) -> None:
@@ -1132,19 +1179,72 @@ def create_app(
             data = compute_metrics(cur)
 
         revenue_display = f"${data['revenue_cents'] / 100:.2f}"
+        avg_revenue_display = f"${data['avg_revenue_cents_per_paid_booking'] / 100:.2f}"
+        utilization_display = f"{data['utilization'] * 100:.1f}%"
+        repeat_rate_display = f"{data['repeat_member_rate'] * 100:.1f}%"
+        conversion_display = f"{data['payment_conversion'] * 100:.1f}%"
+
+        max_space_revenue = max(
+            (row["revenue_cents"] for row in data["revenue_by_space"]), default=0
+        )
+
+        def bar_width(revenue_cents):
+            if max_space_revenue == 0:
+                return 0
+            return round(revenue_cents / max_space_revenue * 100)
+
+        bars = "".join(
+            f"""
+            <div class="bar-row">
+              <span class="bar-label">{escape(row['name'])}</span>
+              <div class="bar" style="width: {bar_width(row['revenue_cents'])}%;"></div>
+              <span class="bar-value">${row['revenue_cents'] / 100:.2f}</span>
+            </div>
+            """
+            for row in data["revenue_by_space"]
+        )
+        if not data["revenue_by_space"]:
+            bars = "<p>No spaces yet.</p>"
+
         return f"""
         <html>
-          <head><title>Spacey - Business Metrics</title></head>
+          <head>
+            <title>Spacey - Business Metrics</title>
+            <style>
+              .cards {{
+                display: flex; flex-wrap: wrap; gap: 1em;
+                padding: 0; list-style: none;
+              }}
+              .cards li {{
+                border: 1px solid #ccc; border-radius: 8px;
+                padding: 0.75em 1em; min-width: 140px;
+              }}
+              .bar-row {{ display: flex; align-items: center; gap: 0.5em; margin: 0.35em 0; }}
+              .bar-label {{ width: 10em; }}
+              .bar {{ background: #4a90d9; height: 1em; min-width: 2px; }}
+            </style>
+          </head>
           <body>
             <h1>Spacey - Business Metrics</h1>
-            <ul>
+            <p>Spacey is a space booking system where members find a space,
+               book it, pay once or subscribe, and get access through a
+               mocked lock.</p>
+            <ul class="cards">
               <li>Spaces: {data['spaces']}</li>
               <li>Bookings: {data['bookings']}</li>
               <li>Paid bookings: {data['paid_bookings']}</li>
               <li>Unpaid bookings: {data['unpaid_bookings']}</li>
               <li>Members: {data['members']}</li>
               <li>Revenue: {revenue_display}</li>
+              <li>Utilization (next 7 days): {utilization_display}</li>
+              <li>Repeat member rate: {repeat_rate_display}</li>
+              <li>Payment conversion: {conversion_display}</li>
+              <li>Avg revenue per paid booking: {avg_revenue_display}</li>
             </ul>
+            <h2>Revenue per space</h2>
+            {bars}
+            <p><em>Figures come from test and load-test data, not real
+               members.</em></p>
             <p><a href="/">Back to spaces</a></p>
           </body>
         </html>
