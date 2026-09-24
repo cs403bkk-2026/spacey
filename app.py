@@ -378,8 +378,9 @@ def seed_starter_space(conn: psycopg.Connection) -> None:
         cur.execute("SELECT COUNT(*) AS count FROM spaces")
         if cur.fetchone()["count"] == 0:
             cur.execute(
-                "INSERT INTO spaces (name, capacity) VALUES (%s, %s)",
-                ("Founders Desk", 1),
+                "INSERT INTO spaces (name, capacity, price_cents) "
+                "VALUES (%s, %s, %s)",
+                ("Founders Desk", 1, 2500),  # $25.00 per hour
             )
 
 def create_app(
