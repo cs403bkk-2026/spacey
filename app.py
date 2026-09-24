@@ -395,6 +395,29 @@ def create_app(
         reset_tables(app.db)
     seed_starter_space(app.db)
 
+    def page(title: str, body: str, account_nav: str = "") -> str:
+        """The shared shell for every HTML page: one stylesheet, one nav.
+        Change the look in static/style.css and every page follows."""
+        nav_right = account_nav or '<a href="/register">Register</a> · <a href="/login">Log in</a>'
+        return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Spacey - {escape(title)}</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <nav class="site-nav">
+      <a class="brand" href="/">Spacey</a>
+      <a href="/dashboard">Business metrics</a>
+      <span class="spacer"></span>
+      {nav_right}
+    </nav>
+    {body}
+  </body>
+</html>"""
+
     def render_account_nav(cur):
         """Shared by every HTML page: Register/Log in when logged out, or
         the logged-in email with My bookings and Log out when logged in."""
@@ -459,12 +482,17 @@ def create_app(
             )
             return f"<p>Already booked:</p><ul>{slots}</ul>"
 
+        def status(space_id):
+            if space_id in booked_ids:
+                return '<span class="status-busy">booked right now</span>'
+            return '<span class="status-free">free right now</span>'
+
         items = "".join(
             f"""
             <li>
-              {escape(row['name'])} - capacity {row['capacity']},
+              <strong>{escape(row['name'])}</strong> - capacity {row['capacity']},
               ${row['price_cents'] / 100:.2f} per hour
-              - {"booked right now" if row['id'] in booked_ids else "free right now"}
+              - {status(row['id'])}
               {booked_times(row['id'])}
               {booking_form(row['id'])}
             </li>
@@ -476,20 +504,18 @@ def create_app(
         # a successful one goes to the confirmation page instead.
         message = ""
         if request.args.get("error"):
-            message = f"<p>Could not book: {escape(request.args['error'])}</p>"
+            message = (
+                f'<p class="message">Could not book: '
+                f"{escape(request.args['error'])}</p>"
+            )
 
-        return f"""
-        <html>
-          <head><title>Spacey - Spaces</title></head>
-          <body>
-            <h1>Spacey</h1>
+        body = f"""
+            <h1>Spaces</h1>
             {message}
-            <p>Times are Bangkok time (UTC+7).</p>
-            <ul>{items}</ul>
-            <p>{account_nav} · <a href="/dashboard">View business metrics</a></p>
-          </body>
-        </html>
+            <p class="hint">Times are Bangkok time (UTC+7).</p>
+            <ul class="list">{items}</ul>
         """
+        return page("Spaces", body, account_nav)
 
     def register_user(email, password):
         """Shared by the JSON API and the HTML register form.
