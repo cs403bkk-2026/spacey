@@ -666,7 +666,7 @@ components:
         capacity: { type: integer, example: 1 }
         price_cents:
           type: integer
-          example: 0
+          example: 2500
           description: Per-hour rate in cents.
         available:
           type: boolean
@@ -707,7 +707,14 @@ components:
             Null until the booking is paid; the full card number and CVC
             are never stored or returned.
           example: "4242"
-      required: [id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4]
+        created_at:
+          type: string
+          format: date-time
+          description: >
+            When the booking was made (see issue #138) - not when the space
+            is used, which is start_time. Set by the database.
+          example: "2026-09-24T02:48:20.933270+00:00"
+      required: [id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at]
 
     User:
       type: object

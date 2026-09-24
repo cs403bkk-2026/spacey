@@ -100,6 +100,14 @@ def get_connection(database_url: str) -> psycopg.Connection:
         cur.execute(
             "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS card_last4 TEXT"
         )
+        # When the booking was made (not when the space is used), so the
+        # dashboard can show growth over time. Bookings made before this
+        # column existed get the time the column was added - the best we
+        # have, and it keeps the column NOT NULL.
+        cur.execute(
+            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
+            "created_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        )
         # Bookings from before that column existed get the space's current price (best we have).
         cur.execute(
             "UPDATE bookings SET amount_cents = s.price_cents "
@@ -276,6 +284,7 @@ def booking_to_json(row: dict) -> dict:
         **row,
         "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
         "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
+        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
     }
 
 def compute_metrics(cur) -> dict:
@@ -762,7 +771,7 @@ def create_app(
                 return jsonify(error="space not found"), 404
 
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4 "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
                 "FROM bookings WHERE space_id = %s ORDER BY start_time",
                 (space_id,),
             )
@@ -821,7 +830,7 @@ def create_app(
                     "amount_cents, user_id) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s) "
                     "RETURNING id, space_id, member, paid, start_time, end_time, "
-                    "amount_cents, user_id, card_last4",
+                    "amount_cents, user_id, card_last4, created_at",
                     (
                         space_id,
                         member,
@@ -1034,7 +1043,7 @@ def create_app(
     def list_bookings():
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4 "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
                 "FROM bookings ORDER BY start_time"
             )
             rows = cur.fetchall()
@@ -1045,7 +1054,7 @@ def create_app(
     def find_booking(booking_id):
         with app.db.cursor() as cur:
             cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4 "
+                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -1061,7 +1070,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4",
+                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at",
                 (booking_id,),
             )
             row = cur.fetchone()
@@ -1081,7 +1090,7 @@ def create_app(
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT id, space_id, member, paid, start_time, end_time, "
-                "amount_cents, user_id, card_last4 "
+                "amount_cents, user_id, card_last4, created_at "
                 "FROM bookings WHERE id = %s",
                 (booking_id,),
             )
@@ -1102,7 +1111,7 @@ def create_app(
             cur.execute(
                 "UPDATE bookings SET paid = TRUE, card_last4 = %s WHERE id = %s "
                 "RETURNING id, space_id, member, paid, start_time, end_time, "
-                "amount_cents, user_id, card_last4",
+                "amount_cents, user_id, card_last4, created_at",
                 (card_number[-4:], booking_id),
             )
             row = cur.fetchone()
