@@ -1372,3 +1372,29 @@ copy-pasting the same four queries into a second route.
 - Action: wait for Maksym's review of the PR, then merge. Owner: Flurina.
 - Action: #143 (consistent forms and messages) and #144 (phone), now small edits on top of `base.html`. Owner: Flurina.
 - Action: add the two new issues (register message, Dockerfile/stylesheet) if the Dockerfile fix shouldn't wait for this PR.
+
+#### Part 5: Fix register page redirect (issue #168)
+
+**People and contributions**
+- Flurina fixed it.
+
+**Progress and evidence**
+- After registering, the user is now sent straight to the login page with a "Registered! Please log in." message, instead of back to the register page with a stale "coming soon" notice.
+- All existing tests passed unchanged.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/174
+
+**Decisions and reasons**
+- The "coming soon" message was written before login existed. Now that login works, the natural flow is register → log in → use the app.
+- No test changes needed: the existing register tests cover form submission and error handling, not the redirect destination.
+
+**Attempts and problems**
+- None - small isolated change.
+
+**Shortcuts and unfinished work**
+- None for this one.
+
+**Help and tools**
+- Used Claude to identify the exact fix. Made the changes and ran the tests ourselves before pushing.
+
+**Next steps**
+- Implement stored access credentials and the entry endpoint.
