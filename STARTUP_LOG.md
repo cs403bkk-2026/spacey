@@ -1279,3 +1279,32 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - !! Urgent action: The live URL is not resolving (spacey.cs403bkk26.space - NXDOMAIN), which blocks #97 (load-test evidence), also due Friday.
 - Gregory/Annabel to pick the next issue from the backlog.
+
+#### Part 2: Record when each booking was made (issue #138)
+
+**People and contributions**
+- Annabel wrote the issue, we all implemented it, Flurina reviewed and merged.
+
+**Progress and evidence**
+- Bookings now store `created_at` - when the booking was made, as opposed to `start_time`, which is when the space gets used. It shows up everywhere a booking is returned.
+- 154 tests passed (3 runs), CI green.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/160
+
+**Decisions and reasons**
+- Let Postgres fill it in (`DEFAULT now()`) instead of the app, so it can't be forgotten or faked from outside.
+- This one is only useful because of what comes next: #139 needs it to draw bookings and revenue per day, which is the growth chart an investor actually asks for.
+
+**Attempts and problems**
+- Two old tests compared the whole booking object and broke, since the new field is a live timestamp. They now drop it before comparing.
+- The column is NOT NULL, so we checked the migration properly: made a booking, dropped the column to fake an old database, restarted - the existing row came back filled in. Worth doing, since this would have hit the deployed database.
+
+**Shortcuts and unfinished work**
+- Bookings from before today get the time the migration ran, not when they were really made. So the first growth chart will show a fake spike on today. Honest but ugly.
+- The PR title mentions a $25 price for Founders Desk, but that was only an example value in openapi.yaml - the seeded desk still costs nothing.
+
+**Help and tools**
+- Used Claude Code for the column, the tests and the doc update, and to run the fake-old-database check. Gregory read the diff and ran the tests before pushing.
+
+**Next steps**
+- Action: #139 (bookings and revenue per day on the dashboard) - unblocked now, and it fits on top of the dashboard Flurina rewrote in Part 1. Owner: Gregory.
+- Live URL still down, still blocking #97.
