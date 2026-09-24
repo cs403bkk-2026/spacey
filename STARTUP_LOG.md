@@ -1247,3 +1247,35 @@ copy-pasting the same four queries into a second route.
 
 **Next steps**
 - Gregory/Annabel to pick the next issue from the backlog.
+
+## 2026-09-24 - Day 11
+
+#### Part 1: Make the metrics dashboard investor-ready (issue #137)
+
+**People and contributions**
+- Annabel picked that one because it's one of the four things explicitly due Friday ("business-metrics dashboard"), and the current one was a plain bullet list. She assigned it to Flurina. Flurina implemented it.
+
+**Progress and evidence**
+- `compute_metrics` gains 5 new fields (used by both `/metrics` and `/dashboard`): `utilization` (booked hours over the next 7 days, as a share of available hours), `repeat_member_rate`, `payment_conversion`, `avg_revenue_cents_per_paid_booking`, and `revenue_by_space` (a per-space breakdown, including spaces with zero bookings).
+- `/dashboard` redesigned: a one-line product description, the metrics as cards, a plain CSS bar chart of revenue per space (no JS library), and a disclaimer that the figures come from test/load-test data.
+- `pytest`: 153 passed, 5 runs in a row (138 existing, 15 new). All 15 fail against unmodified main.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/158
+
+**Decisions and reasons**
+- All four ratio metrics explicitly guard their zero-denominator case (no spaces, no bookings, no paid bookings) instead of relying on try/except.
+- `utilization` counts every booking regardless of paid status, since it measures space usage, not revenue.
+- Kept the bar chart to plain CSS (width as a percentage of the top-earning space) rather than adding a charting library, matching the rest of the site.
+
+**Attempts and problems**
+- Started this on the wrong local branch (the Day 10 Part 7 log-only branch), which didn't have the #119 card-details code merged into it - a test passed that shouldn't have, because paying with no card details still succeeded there. Caught it, moved the work to a fresh branch off current main, and re-verified everything from scratch (branch base hash, full suite, no duplicate defs, read the whole diff) before trusting it again.
+
+**Shortcuts and unfinished work**
+- No real styling framework, just inline CSS - matches the rest of the site, but "investor-ready" is a stretch without any actual visual design pass.
+- `repeat_member_rate` still counts the free-text `member` string (#86), so "Annabel" and "annabel" would count as different members.
+
+**Help and tools**
+- Used Claude Code to design the 5 metrics, the dashboard redesign, and the tests, and to catch and fix the wrong-branch mistake mid-way. I re-ran the suite 5 times, checked the whole flow over real HTTP (booked and paid a real priced booking, confirmed the numbers and the bar chart widths matched), and independently re-verified the branch was based on current main and the diff was clean before pushing.
+
+**Next steps**
+- !! Urgent action: The live URL is not resolving (spacey.cs403bkk26.space - NXDOMAIN), which blocks #97 (load-test evidence), also due Friday.
+- Gregory/Annabel to pick the next issue from the backlog.
