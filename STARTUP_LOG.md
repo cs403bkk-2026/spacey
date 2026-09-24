@@ -1340,3 +1340,35 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: convert the remaining five pages to `page()`, one small PR at a time. Owner: whoever's free.
 - Action: find out whether the site is actually deployed and get the URL - still blocked.
+
+#### Part 4: Move the HTML pages into Jinja templates (issue #162)
+
+**People and contributions**
+- Annabel assigned #162 to Flurina as the foundation for the rest of the UI epic (#140). Flurina implemented it. Maksym will review the PR.
+
+**Progress and evidence**
+- New `templates/` folder: one `base.html` with the shared shell (stylesheet, phone viewport, nav with login state), and every page extends it: homepage, register, log in, my bookings, booking confirmation, booking-not-found, dashboard.
+- `app.py` no longer contains any HTML (1290 -> 1055 lines). Routes collect the data and call `render_template`.
+- The five pages that were still bare HTML (register, login, my bookings, confirmation, dashboard) now share the same stylesheet and nav as the homepage.
+- `pytest`: 154 passed, 5 runs in a row, and `tests/test_app.py` was not changed at all - the issue asked for exactly that.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/169
+
+**Decisions and reasons**
+- Did #162 instead of converting the remaining five pages to the `page()` helper from Part 3 one by one, because #162 would have replaced that work anyway. With one base layout, #143 and #144 become small edits to `style.css` and a few templates.
+- Kept it a pure move: page text stays the same, so the existing tests prove nothing got lost. Formatting (money, percent, Bangkok time) moved into three small template filters, so the templates stay readable for the new team.
+- Kept the change on its own branch and asked Maksym first, rather than merging straight away, since it touches every page shortly before the handover.
+
+**Attempts and problems**
+- While checking how the app gets deployed, I found the Dockerfile only copied `app.py`. So `static/style.css` from Part 3 was never in the deployed image - the live site would have had no styling, and with templates every page would have crashed. Tests didn't catch it, because CI runs against the repo, not the image. Fixed it in this PR and confirmed it by building the image and checking that the stylesheet and pages are served from it.
+
+**Shortcuts and unfinished work**
+- The register page still says "Logging in is coming soon (#122)", although login exists - left unchanged here to keep the move pure (new issue).
+- #142, #143 and #144 are still open, but now each is a small change.
+
+**Help and tools**
+- Used Claude Code to do the mechanical move of six pages into templates. I decided on doing #162 before the other UI sub-issues, checked the result against the unchanged test suite, looked at every page myself, and had it build the Docker image to confirm the deployment fix instead of trusting that it works.
+
+**Next steps**
+- Action: wait for Maksym's review of the PR, then merge. Owner: Flurina.
+- Action: #143 (consistent forms and messages) and #144 (phone), now small edits on top of `base.html`. Owner: Flurina.
+- Action: add the two new issues (register message, Dockerfile/stylesheet) if the Dockerfile fix shouldn't wait for this PR.
