@@ -374,7 +374,7 @@ def test_list_spaces_returns_the_seed_space():
                 "id": 1, 
                 "name": "Founders Desk",
                 "capacity": 1,
-                "price_cents": 0,
+                "price_cents": 2500,
                 "available": True
              }
         ]
@@ -505,7 +505,7 @@ def test_create_booking_for_existing_space_succeeds():
         "space_id": 1,
         "member": "annabel",
         "paid": False,  # unpaid until /pay is called
-        "amount_cents": 0,  # Founders Desk has no price set
+        "amount_cents": 2500,  # Founders Desk is $25.00/hour, booked for 1 hour
         "user_id": None,  # not logged in
         "card_last4": None,  # not paid yet
         **slot(1, 2),
@@ -627,7 +627,7 @@ def test_find_booking_returns_the_booking():
         "space_id": 1,
         "member": "annabel",
         "paid": False,
-        "amount_cents": 0,
+        "amount_cents": 2500,
         "user_id": None,
         "card_last4": None,
         **slot(1, 2),
@@ -636,11 +636,12 @@ def test_find_booking_returns_the_booking():
 def test_booking_records_when_it_was_made():
     client = make_client()
 
-    before = datetime.now(timezone.utc)
+    # a second of slack: the database clock and this one are not identical
+    before = datetime.now(timezone.utc) - timedelta(seconds=1)
     created = client.post(
         "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
     ).get_json()
-    after = datetime.now(timezone.utc)
+    after = datetime.now(timezone.utc) + timedelta(seconds=1)
 
     created_at = datetime.fromisoformat(created["created_at"])
     assert before <= created_at <= after
@@ -1230,7 +1231,7 @@ def test_my_bookings_page_shows_space_time_price_and_paid_status():
 
     unpaid_body = client.get("/bookings/mine").get_data(as_text=True)
     assert "Founders Desk" in unpaid_body
-    assert "$0.00" in unpaid_body
+    assert "$25.00" in unpaid_body  # $25.00/hour, booked for 1 hour
     assert "not paid" in unpaid_body
     assert ">Pay<" in unpaid_body
 
@@ -1753,7 +1754,7 @@ def test_get_space_returns_its_data():
         "id": 1,
         "name": "Founders Desk",
         "capacity": 1,
-        "price_cents": 0,
+        "price_cents": 2500,
         "available": True,
     }
 
@@ -1941,7 +1942,7 @@ def test_update_space_name_shows_up_in_list():
         "id": 1,
         "name": "Founders Desk (Window)",
         "capacity": 1,
-        "price_cents": 0,
+        "price_cents": 2500,
     }
     spaces = client.get("/spaces").get_json()["spaces"]
     assert spaces[0]["name"] == "Founders Desk (Window)"
@@ -2056,7 +2057,7 @@ def test_update_space_with_invalid_values_is_rejected():
     # nothing changed
     space = client.get("/spaces/1").get_json()
     assert space["name"] == "Founders Desk"
-    assert space["price_cents"] == 0
+    assert space["price_cents"] == 2500
 
 
 def test_homepage_links_to_dashboard():
