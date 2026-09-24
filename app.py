@@ -490,8 +490,8 @@ def create_app(
         )
         if status >= 400:
             return redirect(url_for("register_form", error=payload["error"]))
-        return redirect(url_for("register_form", registered=payload["id"]))
-
+        return redirect(url_for("login_form", message="Registered! Please log in."))
+    
     def login_user(email, password):
         """Shared by the JSON API and the HTML login form.
         Returns (payload, status) - {"id": ..., "email": ...}, or an error.
@@ -516,8 +516,12 @@ def create_app(
 
     @app.get("/login")
     def login_form():
-        return render_template("login.html", error=request.args.get("error"))
-
+        return render_template(
+            "login.html",
+            error=request.args.get("error"),
+            message=request.args.get("message"),
+        )
+    
     @app.post("/login")
     def login():
         if request.is_json:
