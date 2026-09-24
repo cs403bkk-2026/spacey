@@ -1308,3 +1308,35 @@ copy-pasting the same four queries into a second route.
 **Next steps**
 - Action: #139 (bookings and revenue per day on the dashboard) - unblocked now, and it fits on top of the dashboard Flurina rewrote in Part 1. Owner: Gregory.
 - Live URL still down, still blocking #97.
+
+#### Part 3: Shared layout and stylesheet (issue #141)
+
+**People and contributions**
+- Annabel opened the UI epic (#140) and assigned all three of us. Flurina took #141, the foundation the other three sub-issues sit on.
+
+**Progress and evidence**
+- Added `static/style.css` - one plain stylesheet, no framework, no build step - and a shared `page()` helper in `app.py` that wraps a page in the same head, stylesheet link and nav bar.
+- Converted the homepage to use both: spaces now render as bordered cards, free/booked shows in green/red, and form fields line up.
+- `pytest`: 154 passed, and notably no existing test needed changing - the page content they assert on is all still there.
+- Also loaded the page and `/static/style.css` over real HTTP to confirm Flask actually serves the stylesheet, not just that the link tag exists.
+- PR: https://github.com/cs403bkk-2026/spacey/pull/165
+
+**Decisions and reasons**
+- Did #141 before #142/#143/#144 on purpose. Every HTML page was an inline f-string in `app.py` with no shared shell, so styling them meant editing six separate strings. Now the look lives in one CSS file and each remaining page is a one-line change to call `page()`.
+- Kept it to plain CSS with custom properties (`--accent` etc.) rather than a framework, matching #140's own wording ("one plain CSS file, no framework or build step, so the new team can change it easily").
+- Only converted the homepage in this PR. The other five pages (register, login, my bookings, confirmation, dashboard) still render their own shells - converting them is small now and can go in separate PRs.
+
+**Attempts and problems**
+- None for the code. Separately, we think the live site may be down, but we couldn't confirm it - we don't have the live URL to test against, which is the same `DEPLOY_ENABLED` blocker that's been open since Day 1.
+
+**Shortcuts and unfinished work**
+- Five pages still have their own inline HTML shells (follow-up PRs).
+- The dashboard has its own `<style>` block that duplicates rules now in `style.css` - should be removed when the dashboard gets converted.
+- #142 (cards), #143 (consistent forms/messages), #144 (mobile) still open, but all much smaller now.
+
+**Help and tools**
+- Used Claude to design the helper and the stylesheet and to write the change. I reviewed the diff, ran the suite myself, and opened the page in a browser to check it actually looks right before pushing.
+
+**Next steps**
+- Action: convert the remaining five pages to `page()`, one small PR at a time. Owner: whoever's free.
+- Action: find out whether the site is actually deployed and get the URL - still blocked.
