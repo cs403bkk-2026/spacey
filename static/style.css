@@ -56,6 +56,12 @@ a {
   flex: 1;
 }
 
+/* The Log out button sits inline in the nav, not as a full form row. */
+.site-nav form {
+  display: inline;
+  margin: 0;
+}
+
 .message {
   border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
