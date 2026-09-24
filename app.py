@@ -4,8 +4,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import psycopg
-from flask import Flask, jsonify, redirect, request, session, url_for
-from markupsafe import escape
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -396,49 +395,26 @@ def create_app(
         reset_tables(app.db)
     seed_starter_space(app.db)
 
-    def page(title: str, body: str, account_nav: str = "") -> str:
-        """The shared shell for every HTML page: one stylesheet, one nav.
-        Change the look in static/style.css and every page follows."""
-        nav_right = account_nav or '<a href="/register">Register</a> · <a href="/login">Log in</a>'
-        return f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Spacey - {escape(title)}</title>
-    <link rel="stylesheet" href="/static/style.css">
-  </head>
-  <body>
-    <nav class="site-nav">
-      <a class="brand" href="/">Spacey</a>
-      <a href="/dashboard">Business metrics</a>
-      <span class="spacer"></span>
-      {nav_right}
-    </nav>
-    {body}
-  </body>
-</html>"""
+    # HTML pages live in templates/ (all extending base.html) and the look
+    # in static/style.css. Jinja escapes every {{ value }} automatically.
+    app.add_template_filter(local_time, "local_time")
+    app.add_template_filter(lambda cents: f"${cents / 100:.2f}", "money")
+    app.add_template_filter(lambda share: f"{share * 100:.1f}%", "percent")
 
-    def render_account_nav(cur):
-        """Shared by every HTML page: Register/Log in when logged out, or
-        the logged-in email with My bookings and Log out when logged in."""
-        logged_out_nav = '<a href="/register">Register</a> · <a href="/login">Log in</a>'
+    @app.context_processor
+    def inject_current_user():
+        """Every template gets the logged-in email (or None) for the nav."""
         user_id = session.get("user_id")
         if user_id is None:
-            return logged_out_nav
+            return {"current_user_email": None}
 
-        cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-        user = cur.fetchone()
+        with app.db.cursor() as cur:
+            cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+            user = cur.fetchone()
         if user is None:
             session.pop("user_id", None)  # stale session, e.g. after a DB reset
-            return logged_out_nav
-
-        return (
-            f"Logged in as {escape(user['email'])} · "
-            '<a href="/bookings/mine">My bookings</a> '
-            '<form method="post" action="/logout" style="display:inline">'
-            "<button type=\"submit\">Log out</button></form>"
-        )
+            return {"current_user_email": None}
+        return {"current_user_email": user["email"]}
 
     @app.get("/")
     def index():
@@ -459,64 +435,16 @@ def create_app(
             upcoming = {}
             for row in cur.fetchall():
                 upcoming.setdefault(row["space_id"], []).append(row)
-            account_nav = render_account_nav(cur)
 
-        def booking_form(space_id):
-            return f"""
-              <form method="post" action="/spaces/{space_id}/book">
-                <input name="member" placeholder="Your name" required>
-                <input type="datetime-local" name="start_time" required>
-                <input type="datetime-local" name="end_time" required>
-                <button type="submit">Book</button>
-              </form>
-            """
-
-        def booked_times(space_id):
-            bookings = upcoming.get(space_id, [])
-            if not bookings:
-                return "<p>No bookings coming up.</p>"
-
-            slots = "".join(
-                f"<li>{local_time(b['start_time'])} to "
-                f"{local_time(b['end_time'])}</li>"
-                for b in bookings
-            )
-            return f"<p>Already booked:</p><ul>{slots}</ul>"
-
-        def status(space_id):
-            if space_id in booked_ids:
-                return '<span class="status-busy">booked right now</span>'
-            return '<span class="status-free">free right now</span>'
-
-        items = "".join(
-            f"""
-            <li>
-              <strong>{escape(row['name'])}</strong> - capacity {row['capacity']},
-              ${row['price_cents'] / 100:.2f} per hour
-              - {status(row['id'])}
-              {booked_times(row['id'])}
-              {booking_form(row['id'])}
-            </li>
-            """
-            for row in rows
+        # error is set by the redirect when a form booking fails (see
+        # book_from_form); a successful one goes to the confirmation page.
+        return render_template(
+            "index.html",
+            spaces=rows,
+            booked_ids=booked_ids,
+            upcoming=upcoming,
+            error=request.args.get("error"),
         )
-
-        # Set by the redirect when a form booking fails (see book_from_form);
-        # a successful one goes to the confirmation page instead.
-        message = ""
-        if request.args.get("error"):
-            message = (
-                f'<p class="message">Could not book: '
-                f"{escape(request.args['error'])}</p>"
-            )
-
-        body = f"""
-            <h1>Spaces</h1>
-            {message}
-            <p class="hint">Times are Bangkok time (UTC+7).</p>
-            <ul class="list">{items}</ul>
-        """
-        return page("Spaces", body, account_nav)
 
     def register_user(email, password):
         """Shared by the JSON API and the HTML register form.
@@ -544,28 +472,11 @@ def create_app(
 
     @app.get("/register")
     def register_form():
-        message = ""
-        if request.args.get("registered"):
-            message = "<p>Registered! Logging in is coming soon (#122).</p>"
-        elif request.args.get("error"):
-            message = f"<p>{escape(request.args['error'])}</p>"
-
-        return f"""
-        <html>
-          <head><title>Spacey - Register</title></head>
-          <body>
-            <h1>Register</h1>
-            {message}
-            <form method="post" action="/register">
-              <input type="email" name="email" placeholder="Email" required>
-              <input type="password" name="password"
-                     placeholder="Password (min 8 characters)" required>
-              <button type="submit">Register</button>
-            </form>
-            <p><a href="/">Back to spaces</a></p>
-          </body>
-        </html>
-        """
+        return render_template(
+            "register.html",
+            registered=request.args.get("registered"),
+            error=request.args.get("error"),
+        )
 
     @app.post("/register")
     def register():
@@ -605,25 +516,7 @@ def create_app(
 
     @app.get("/login")
     def login_form():
-        message = ""
-        if request.args.get("error"):
-            message = f"<p>{escape(request.args['error'])}</p>"
-
-        return f"""
-        <html>
-          <head><title>Spacey - Log in</title></head>
-          <body>
-            <h1>Log in</h1>
-            {message}
-            <form method="post" action="/login">
-              <input type="email" name="email" placeholder="Email" required>
-              <input type="password" name="password" placeholder="Password" required>
-              <button type="submit">Log in</button>
-            </form>
-            <p><a href="/register">Register</a> · <a href="/">Back to spaces</a></p>
-          </body>
-        </html>
-        """
+        return render_template("login.html", error=request.args.get("error"))
 
     @app.post("/login")
     def login():
@@ -933,56 +826,14 @@ def create_app(
             booking = cur.fetchone()
 
         if booking is None:
-            return "<p>Booking not found. <a href='/'>Back to spaces</a></p>", 404
+            return render_template("booking_not_found.html"), 404
 
-        total_display = f"${booking['amount_cents'] / 100:.2f}"
-
-        if booking["paid"]:
-            card_display = (
-                f" (card ending {booking['card_last4']})"
-                if booking["card_last4"]
-                else ""
-            )
-            action = f"""
-              <p>Paid. Total: {total_display}{card_display}</p>
-              <form method="post" action="/bookings/{booking_id}/confirmation/unlock">
-                <button type="submit">Unlock</button>
-              </form>
-            """
-        else:
-            action = f"""
-              <p>Not paid yet - total {total_display}, pay to get your access code.</p>
-              <form method="post" action="/bookings/{booking_id}/confirmation/pay">
-                <input name="card_number" placeholder="Card number (mocked, e.g. 4242424242424242)" required>
-                <input name="expiry" placeholder="MM/YY" required>
-                <input name="cvc" placeholder="CVC" required>
-                <button type="submit">Pay</button>
-              </form>
-            """
-
-        message = ""
-        if request.args.get("code"):
-            message = (
-                f"<p>Your access code: <strong>"
-                f"{escape(request.args['code'])}</strong></p>"
-            )
-        elif request.args.get("error"):
-            message = f"<p>{escape(request.args['error'])}</p>"
-
-        return f"""
-        <html>
-          <head><title>Spacey - Booking #{booking_id}</title></head>
-          <body>
-            <h1>Booking #{booking_id}</h1>
-            <p>{escape(booking['space_name'])} for {escape(booking['member'])}</p>
-            <p>{local_time(booking['start_time'])}
-               to {local_time(booking['end_time'])} (Bangkok time)</p>
-            {action}
-            {message}
-            <p><a href="/">Back to spaces</a></p>
-          </body>
-        </html>
-        """
+        return render_template(
+            "confirmation.html",
+            booking=booking,
+            code=request.args.get("code"),
+            error=request.args.get("error"),
+        )
 
     @app.post("/bookings/<int:booking_id>/confirmation/pay")
     def pay_from_confirmation(booking_id):
@@ -1036,35 +887,8 @@ def create_app(
                 (session["user_id"],),
             )
             rows = cur.fetchall()
-            account_nav = render_account_nav(cur)
 
-        items = "".join(
-            f"""
-            <li>
-              {escape(row['space_name'])} -
-              {local_time(row['start_time'])} to {local_time(row['end_time'])}
-              (Bangkok time) -
-              ${row['amount_cents'] / 100:.2f} -
-              {"paid" if row['paid'] else "not paid"} -
-              <a href="/bookings/{row['id']}/confirmation">{"Get unlock code" if row['paid'] else "Pay"}</a>
-            </li>
-            """
-            for row in rows
-        )
-        if not rows:
-            items = "<li>No bookings yet.</li>"
-
-        return f"""
-        <html>
-          <head><title>Spacey - My bookings</title></head>
-          <body>
-            <h1>My bookings</h1>
-            <p>{account_nav}</p>
-            <ul>{items}</ul>
-            <p><a href="/">Back to spaces</a></p>
-          </body>
-        </html>
-        """
+        return render_template("my_bookings.html", bookings=rows)
 
     @app.get("/bookings")
     def list_bookings():
@@ -1214,77 +1038,18 @@ def create_app(
         with app.db.cursor() as cur:
             data = compute_metrics(cur)
 
-        revenue_display = f"${data['revenue_cents'] / 100:.2f}"
-        avg_revenue_display = f"${data['avg_revenue_cents_per_paid_booking'] / 100:.2f}"
-        utilization_display = f"{data['utilization'] * 100:.1f}%"
-        repeat_rate_display = f"{data['repeat_member_rate'] * 100:.1f}%"
-        conversion_display = f"{data['payment_conversion'] * 100:.1f}%"
-
-        max_space_revenue = max(
-            (row["revenue_cents"] for row in data["revenue_by_space"]), default=0
-        )
-
-        def bar_width(revenue_cents):
-            if max_space_revenue == 0:
-                return 0
-            return round(revenue_cents / max_space_revenue * 100)
-
-        bars = "".join(
-            f"""
-            <div class="bar-row">
-              <span class="bar-label">{escape(row['name'])}</span>
-              <div class="bar" style="width: {bar_width(row['revenue_cents'])}%;"></div>
-              <span class="bar-value">${row['revenue_cents'] / 100:.2f}</span>
-            </div>
-            """
+        # Bar length is relative to the top-earning space (that one is 100%).
+        top = max((row["revenue_cents"] for row in data["revenue_by_space"]), default=0)
+        bars = [
+            {
+                "name": row["name"],
+                "revenue_cents": row["revenue_cents"],
+                "width": round(row["revenue_cents"] / top * 100) if top else 0,
+            }
             for row in data["revenue_by_space"]
-        )
-        if not data["revenue_by_space"]:
-            bars = "<p>No spaces yet.</p>"
+        ]
 
-        return f"""
-        <html>
-          <head>
-            <title>Spacey - Business Metrics</title>
-            <style>
-              .cards {{
-                display: flex; flex-wrap: wrap; gap: 1em;
-                padding: 0; list-style: none;
-              }}
-              .cards li {{
-                border: 1px solid #ccc; border-radius: 8px;
-                padding: 0.75em 1em; min-width: 140px;
-              }}
-              .bar-row {{ display: flex; align-items: center; gap: 0.5em; margin: 0.35em 0; }}
-              .bar-label {{ width: 10em; }}
-              .bar {{ background: #4a90d9; height: 1em; min-width: 2px; }}
-            </style>
-          </head>
-          <body>
-            <h1>Spacey - Business Metrics</h1>
-            <p>Spacey is a space booking system where members find a space,
-               book it, pay once or subscribe, and get access through a
-               mocked lock.</p>
-            <ul class="cards">
-              <li>Spaces: {data['spaces']}</li>
-              <li>Bookings: {data['bookings']}</li>
-              <li>Paid bookings: {data['paid_bookings']}</li>
-              <li>Unpaid bookings: {data['unpaid_bookings']}</li>
-              <li>Members: {data['members']}</li>
-              <li>Revenue: {revenue_display}</li>
-              <li>Utilization (next 7 days): {utilization_display}</li>
-              <li>Repeat member rate: {repeat_rate_display}</li>
-              <li>Payment conversion: {conversion_display}</li>
-              <li>Avg revenue per paid booking: {avg_revenue_display}</li>
-            </ul>
-            <h2>Revenue per space</h2>
-            {bars}
-            <p><em>Figures come from test and load-test data, not real
-               members.</em></p>
-            <p><a href="/">Back to spaces</a></p>
-          </body>
-        </html>
-        """
+        return render_template("dashboard.html", metrics=data, bars=bars)
     
     return app
 app = create_app()
