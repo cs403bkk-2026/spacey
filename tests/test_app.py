@@ -498,7 +498,9 @@ def test_create_booking_for_existing_space_succeeds():
     )
 
     assert response.status_code == 201
-    assert response.get_json() == {
+    body = response.get_json()
+    body.pop("created_at")  # set by the database, checked in its own test
+    assert body == {
         "id": 1,
         "space_id": 1,
         "member": "annabel",
@@ -618,7 +620,9 @@ def test_find_booking_returns_the_booking():
     response = client.get(f"/bookings/{created['id']}")
 
     assert response.status_code == 200
-    assert response.get_json() == {
+    body = response.get_json()
+    body.pop("created_at")
+    assert body == {
         "id": 1,
         "space_id": 1,
         "member": "annabel",
@@ -628,6 +632,25 @@ def test_find_booking_returns_the_booking():
         "card_last4": None,
         **slot(1, 2),
     }
+
+def test_booking_records_when_it_was_made():
+    client = make_client()
+
+    before = datetime.now(timezone.utc)
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    after = datetime.now(timezone.utc)
+
+    created_at = datetime.fromisoformat(created["created_at"])
+    assert before <= created_at <= after
+    # it's when the booking was made, not when the space is used
+    assert created_at < datetime.fromisoformat(created["start_time"])
+
+    # and it survives being read back and paid
+    assert client.get("/bookings/1").get_json()["created_at"] == created["created_at"]
+    paid = client.post("/bookings/1/pay", json=VALID_CARD).get_json()
+    assert paid["created_at"] == created["created_at"]
 
 def test_find_unknown_booking_returns_404():
     client = make_client()
