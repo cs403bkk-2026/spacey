@@ -556,7 +556,46 @@ paths:
                       Sum of amount_cents across paid bookings only - the
                       price each was actually charged at booking time, not
                       today's space price.
-                required: [spaces, bookings, paid_bookings, unpaid_bookings, members, revenue_cents]
+                  utilization:
+                    type: number
+                    description: >
+                      Booked hours over the next 7 days as a share of
+                      available hours (spaces x 7 x 24), 0 if there are no
+                      spaces. Counts every booking regardless of paid
+                      status - this measures usage, not revenue.
+                    example: 0.15
+                  repeat_member_rate:
+                    type: number
+                    description: >
+                      Share of members (by the free-text member string,
+                      see issue #86) with more than one booking, 0 if
+                      there are no bookings.
+                    example: 0.25
+                  payment_conversion:
+                    type: number
+                    description: Share of bookings that were paid, 0 if there are no bookings.
+                    example: 0.67
+                  avg_revenue_cents_per_paid_booking:
+                    type: integer
+                    description: revenue_cents divided by paid_bookings, rounded; 0 if none are paid.
+                    example: 1500
+                  revenue_by_space:
+                    type: array
+                    description: One row per space, even one with no bookings at all.
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        revenue_cents: { type: integer }
+                      required: [id, name, revenue_cents]
+                required:
+                  [
+                    spaces, bookings, paid_bookings, unpaid_bookings, members,
+                    revenue_cents, utilization, repeat_member_rate,
+                    payment_conversion, avg_revenue_cents_per_paid_booking,
+                    revenue_by_space,
+                  ]
 
 components:
   parameters:
