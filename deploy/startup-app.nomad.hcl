@@ -45,7 +45,7 @@ job "spacey" {
       }
     }
 
-    task "app" {
+    task "spacey" {
       driver = "docker"
 
       config {
