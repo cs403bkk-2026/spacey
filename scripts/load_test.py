@@ -41,12 +41,12 @@ def run(url: str, total_requests: int, concurrency: int) -> None:
     print(f"Total wall time: {total_time:.2f}s")
     print(f"Successful requests: {len(latencies)}/{total_requests}")
     print(f"Failed requests: {failures}/{total_requests} "
-          f"({failures / total_requests:.1%})")
+        f"({failures / total_requests:.1%})")
     if latencies:
         print(f"Latency (ms) - min: {min(latencies):.1f}, "
-              f"median: {statistics.median(latencies):.1f}, "
-              f"p95: {sorted(latencies)[int(len(latencies) * 0.95) - 1]:.1f}, "
-              f"max: {max(latencies):.1f}")
+            f"median: {statistics.median(latencies):.1f}, "
+            f"p95: {sorted(latencies)[int(len(latencies) * 0.95) - 1]:.1f}, "
+            f"max: {max(latencies):.1f}")
     print(f"Throughput: {total_requests / total_time:.1f} req/s")
 
 
