@@ -7,6 +7,27 @@ API-driven lock.
 This repository deliberately starts with delivery plumbing and almost no product. The product
 design, architecture, data model, and work split are yours.
 
+## Tech stack and project layout
+
+Flask 3 with plain SQL through psycopg 3 (no ORM) on Postgres 16. HTML pages are server-rendered
+Jinja templates with one plain stylesheet: no JavaScript and no build step. Production runs
+gunicorn in a Docker image, deployed to Nomad.
+
+| Path                    | What's there                                                              |
+|-------------------------|---------------------------------------------------------------------------|
+| `app.py`                | The whole app: schema setup, routes, validation, metrics                  |
+| `templates/`            | Jinja pages; each one extends `base.html`                                 |
+| `static/style.css`      | The single stylesheet used by every page                                  |
+| `tests/test_app.py`     | pytest suite; runs against a real Postgres                                |
+| `openapi.yaml`          | JSON API reference (OpenAPI 3.0)                                          |
+| `deploy/`               | Nomad job used by the deploy workflow                                     |
+| `.github/workflows/`    | CI: test on every PR; build and deploy on `main`                          |
+| `scripts/load_test.py`  | Load test script; results are in [LOAD_TEST.md](LOAD_TEST.md)             |
+| `STARTUP_LOG.md`        | Day-by-day record of work, decisions, and trade-offs                      |
+
+The database schema is created and migrated when the app starts (see `get_connection` in
+`app.py`); there is no separate migration tool.
+
 ## Start locally
 
 Requires Python 3.12 and Docker.
