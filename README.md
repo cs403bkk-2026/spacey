@@ -26,7 +26,7 @@ A few things that trip people up the first time:
 
 - **Port 5433, not 5432.** `compose.yaml` maps the database container to host port 5433, not
   Postgres's usual 5432 - that's so it doesn't collide with a Postgres already installed on your
-  laptop (this happened to us). `DATABASE_URL` must say `5433` when running locally like above.
+  laptop (this happened to us). `DATABASE_URL` must say `5433`, when running locally like above.
 - **Port 5001, not 5000.** On macOS, port 5000 is normally taken by AirPlay Receiver, so Flask's
   default port fails silently or serves the wrong thing. Use `--port 5001` (or any other free
   port) instead.
