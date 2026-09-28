@@ -50,7 +50,7 @@ development-only default - but a real deployment should set all of them explicit
 
 | Variable            | What it's for                                                                 | Default (local only)                              |
 |----------------------|-------------------------------------------------------------------------------|-----------------------------------------------------|
-| `DATABASE_URL`       | Where to find Postgres.                                                       | `postgresql://spacey:spacey@localhost:5432/spacey`  |
+| `DATABASE_URL`       | Where to find Postgres.                                                       | `postgresql://spacey:spacey@localhost:5433/spacey`  |
 | `APP_REVISION`       | Shown by `GET /health`, so a deployment can confirm which commit is live.     | `local`                                              |
 | `RESET_DB_ON_START`  | If `true`, wipes all tables on startup. Used by tests; never set this in a real deployment or you will delete real data. | `false` |
 | `SECRET_KEY`         | Signs the login session cookie. **Must** be set to a real secret in any deployment - the default is public (it's printed right here in this file), so anyone could forge a session cookie claiming to be any user. The app would still run fine without it set, which is exactly what makes this easy to forget. | `dev-secret-key-not-for-production` |
