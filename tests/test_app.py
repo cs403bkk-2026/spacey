@@ -316,7 +316,7 @@ def test_form_times_are_read_as_bangkok_time():
     # 09:00 in Bangkok (UTC+7) is 02:00 UTC
     assert booking["start_time"] == "2026-09-25T02:00:00+00:00"
     assert booking["end_time"] == "2026-09-25T03:00:00+00:00"
-
+# Halo it's me  
 def test_form_booking_a_taken_slot_shows_the_error():
     client = make_client()
     client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 3)})
