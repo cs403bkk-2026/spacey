@@ -125,3 +125,6 @@ Do not wait for the kickoff meeting.
 
 This repository is public. Never commit `.env`, credentials, tokens, or private keys. Deployment
 credentials live in GitHub Actions or the runtime platform, not in the repository.
+
+## Secret
+I update this readme to make a pull request. It's a secret you know?
