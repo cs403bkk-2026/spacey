@@ -66,6 +66,7 @@ def get_connection(database_url: str) -> psycopg.Connection:
         )
         # First step of #120 (real accounts): just registration for now.
         # Storing only a hash, never the password itself.
+	# Worapat was here!
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
