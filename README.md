@@ -11,6 +11,8 @@ design, architecture, data model, and work split are yours.
 
 Requires Python 3.12 and Docker.
 
+Make sure Docker is running before starting the database container.
+
 ```sh
 python3.12 -m venv .venv
 source .venv/bin/activate
