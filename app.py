@@ -791,7 +791,7 @@ def create_app(
 
         payload, status = book_space(
             space_id,
-            body.get("member", "guest"),
+            body.get("member") or "guest",
             start_time,
             end_time,
             body.get("party_size", 1),
