@@ -726,11 +726,14 @@ def create_app(
                 return {
                     "error": "party_size must be a whole number of at least 1"
                 }, 400
+
+            """
             if party_size > space["capacity"]:
                 return {
                     "error": f"party_size {party_size} exceeds this space's "
                     f"capacity of {space['capacity']}"
                 }, 400
+            """
 
             # Overlap = starts before the other ends AND ends after the
             # other starts. Back-to-back bookings (10-11, 11-12) are allowed.
