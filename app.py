@@ -9,6 +9,8 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from purchase import calculate_booking_price_cents
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
 )
@@ -196,14 +198,6 @@ def parse_form_time(value) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=LOCAL_TZ)
     return parsed
-
-
-def amount_for(price_cents: int, start_time: datetime, end_time: datetime) -> int:
-    """A space's price_cents is a per-hour rate, so a 3-hour booking costs
-    three times a 1-hour one. Integer maths, rounding half up, so we never
-    hand out fractions of a cent."""
-    seconds = int((end_time - start_time).total_seconds())
-    return (price_cents * seconds + 1800) // 3600
 
 
 def is_valid_name(name) -> bool:
@@ -763,7 +757,7 @@ def create_app(
                         end_time,
                         0
                         if subscribed
-                        else amount_for(
+                        else calculate_booking_price_cents(
                             space["price_cents"], start_time, end_time
                         ),
                         user_id,
