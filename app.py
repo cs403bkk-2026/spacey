@@ -9,6 +9,8 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from purchase import calculate_booking_price_cents
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
 )
@@ -20,7 +22,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-not-for-production")
 
 def get_connection(database_url: str) -> psycopg.Connection:
     try:
-        conn = psycopg.connect(database_url, row_factory=dict_row, autocommit=True)
+        conn = psycopg.connect(
+            database_url, row_factory=dict_row, autocommit=True)
     except psycopg.OperationalError as error:
         # A raw psycopg traceback here is the first thing a new contributor
         # sees if Postgres isn't running yet - fail fast with a clear pointer
@@ -198,14 +201,6 @@ def parse_form_time(value) -> datetime | None:
     return parsed
 
 
-def amount_for(price_cents: int, start_time: datetime, end_time: datetime) -> int:
-    """A space's price_cents is a per-hour rate, so a 3-hour booking costs
-    three times a 1-hour one. Integer maths, rounding half up, so we never
-    hand out fractions of a cent."""
-    seconds = int((end_time - start_time).total_seconds())
-    return (price_cents * seconds + 1800) // 3600
-
-
 def is_valid_name(name) -> bool:
     return isinstance(name, str) and name.strip() != ""
 
@@ -286,6 +281,7 @@ def booking_to_json(row: dict) -> dict:
         "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
     }
 
+
 def compute_metrics(cur) -> dict:
     cur.execute("SELECT COUNT(*) AS count FROM spaces")
     total_spaces = cur.fetchone()["count"]
@@ -362,6 +358,7 @@ def compute_metrics(cur) -> dict:
         "revenue_by_space": revenue_by_space,
     }
 
+
 def reset_tables(conn: psycopg.Connection) -> None:
     """Wipe all rows and restart ids. Only used for tests and an opt-in
     local reset (RESET_DB_ON_START=true) - off by default, so a real
@@ -371,6 +368,7 @@ def reset_tables(conn: psycopg.Connection) -> None:
             "TRUNCATE bookings, spaces, subscriptions, users "
             "RESTART IDENTITY CASCADE"
         )
+
 
 def seed_starter_space(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
@@ -382,11 +380,13 @@ def seed_starter_space(conn: psycopg.Connection) -> None:
                 ("Founders Desk", 1, 2500),  # $25.00 per hour
             )
 
+
 def create_app(
     database_url: str = DATABASE_URL, reset_on_start: bool | None = None
 ) -> Flask:
     if reset_on_start is None:
-        reset_on_start = os.getenv("RESET_DB_ON_START", "false").lower() == "true"
+        reset_on_start = os.getenv(
+            "RESET_DB_ON_START", "false").lower() == "true"
 
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
@@ -412,7 +412,8 @@ def create_app(
             cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
             user = cur.fetchone()
         if user is None:
-            session.pop("user_id", None)  # stale session, e.g. after a DB reset
+            # stale session, e.g. after a DB reset
+            session.pop("user_id", None)
             return {"current_user_email": None}
         return {"current_user_email": user["email"]}
 
@@ -482,7 +483,8 @@ def create_app(
     def register():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = register_user(body.get("email"), body.get("password"))
+            payload, status = register_user(
+                body.get("email"), body.get("password"))
             return jsonify(payload), status
 
         payload, status = register_user(
@@ -491,7 +493,7 @@ def create_app(
         if status >= 400:
             return redirect(url_for("register_form", error=payload["error"]))
         return redirect(url_for("login_form", message="Registered! Please log in."))
-    
+
     def login_user(email, password):
         """Shared by the JSON API and the HTML login form.
         Returns (payload, status) - {"id": ..., "email": ...}, or an error.
@@ -521,12 +523,13 @@ def create_app(
             error=request.args.get("error"),
             message=request.args.get("message"),
         )
-    
+
     @app.post("/login")
     def login():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = login_user(body.get("email"), body.get("password"))
+            payload, status = login_user(
+                body.get("email"), body.get("password"))
             return jsonify(payload), status
 
         payload, status = login_user(
@@ -551,7 +554,7 @@ def create_app(
                 cur.execute("SELECT 1")
         except psycopg.Error:
             return jsonify(status="error", error="database unreachable"), 503
-        
+
         return jsonify(
             status="ok",
             revision=os.getenv("APP_REVISION", "local"),
@@ -763,7 +766,7 @@ def create_app(
                         end_time,
                         0
                         if subscribed
-                        else amount_for(
+                        else calculate_booking_price_cents(
                             space["price_cents"], start_time, end_time
                         ),
                         user_id,
@@ -1043,7 +1046,8 @@ def create_app(
             data = compute_metrics(cur)
 
         # Bar length is relative to the top-earning space (that one is 100%).
-        top = max((row["revenue_cents"] for row in data["revenue_by_space"]), default=0)
+        top = max((row["revenue_cents"]
+                for row in data["revenue_by_space"]), default=0)
         bars = [
             {
                 "name": row["name"],
@@ -1054,6 +1058,8 @@ def create_app(
         ]
 
         return render_template("dashboard.html", metrics=data, bars=bars)
-    
+
     return app
+
+
 app = create_app()
