@@ -1,4 +1,9 @@
 
+import secrets
+
+from flask import current_app as app
+
+
 def issue_access_code(booking_id):
     """Shared by the JSON API and the Unlock button.
     Returns (payload, status)."""
