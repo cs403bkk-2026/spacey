@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from purchase import calculate_booking_price_cents, is_valid_capacity
+from access import issue_access_code
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -968,22 +969,6 @@ def create_app(
 
         return booking_to_json(row), 200
 
-    def issue_access_code(booking_id):
-        """Shared by the JSON API and the Unlock button.
-        Returns (payload, status)."""
-        with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, paid FROM bookings WHERE id = %s", (booking_id,)
-            )
-            booking = cur.fetchone()
-
-        if booking is None:
-            return {"error": "booking not found"}, 404
-        if not booking["paid"]:
-            return {"error": "booking is not paid"}, 402
-
-        access_code = secrets.token_hex(4)  # mocked lock integration
-        return {"booking_id": booking_id, "access_code": access_code}, 200
 
     @app.post("/bookings/<int:booking_id>/pay")
     def pay_booking(booking_id):
