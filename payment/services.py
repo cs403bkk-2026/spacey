@@ -6,6 +6,15 @@ CVC_RE = re.compile(r"^\d{3,4}$")
 EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
 
 
+def booking_to_json(row: dict) -> dict:
+    return {
+        **row,
+        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
+        "end_time":   row["end_time"].astimezone(timezone.utc).isoformat(),
+        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
+    }
+
+
 def member_key(name: str) -> str:
     return name.strip().lower()
 
@@ -38,7 +47,8 @@ def mark_booking_paid(app, booking_id, card_number, expiry, cvc, force_failure=F
     Returns (payload, status) - the booking, or an {"error": ...}."""
     with app.db.cursor() as cur:
         cur.execute(
-            "SELECT id, member, paid, amount_cents, card_last4 "
+            "SELECT id, space_id, member, paid, start_time, end_time, "
+            "amount_cents, user_id, card_last4, created_at "
             "FROM bookings WHERE id = %s",
             (booking_id,),
         )
@@ -47,7 +57,7 @@ def mark_booking_paid(app, booking_id, card_number, expiry, cvc, force_failure=F
             return {"error": "booking not found"}, 404
 
         if row["paid"]:
-            return row, 200
+            return booking_to_json(row), 200
 
         card_error = validate_card(card_number, expiry, cvc)
         if card_error:
@@ -58,9 +68,10 @@ def mark_booking_paid(app, booking_id, card_number, expiry, cvc, force_failure=F
 
         cur.execute(
             "UPDATE bookings SET paid = TRUE, card_last4 = %s WHERE id = %s "
-            "RETURNING id, member, paid, amount_cents, card_last4",
+            "RETURNING id, space_id, member, paid, start_time, end_time, "
+            "amount_cents, user_id, card_last4, created_at",
             (card_number[-4:], booking_id),
         )
         row = cur.fetchone()
 
-    return row, 200
+    return booking_to_json(row), 200
