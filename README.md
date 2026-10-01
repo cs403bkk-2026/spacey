@@ -20,7 +20,7 @@ DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey pytest
 DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey flask --app app run --port 5001 --debug
 ```
 
-Open <http://127.0.0.1:5001/>. The health check is at <http://127.0.0.1:5001/health>.
+Open <http://127.0.0.1:5001/>. <br>The health check is at <http://127.0.0.1:5001/health>.
 
 A few things that trip people up the first time:
 
