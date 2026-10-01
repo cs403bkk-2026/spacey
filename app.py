@@ -9,7 +9,7 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from purchase import calculate_booking_price_cents
+from purchase import calculate_booking_price_cents, is_valid_capacity
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -204,14 +204,6 @@ def parse_form_time(value) -> datetime | None:
 def is_valid_name(name) -> bool:
     return isinstance(name, str) and name.strip() != ""
 
-
-def is_valid_capacity(capacity) -> bool:
-    # bool is a subclass of int in Python, so rule out true/false
-    return (
-        isinstance(capacity, int)
-        and not isinstance(capacity, bool)
-        and capacity >= 1
-    )
 
 
 def is_valid_price(price) -> bool:
