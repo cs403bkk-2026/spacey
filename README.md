@@ -45,12 +45,14 @@ Then open <http://127.0.0.1:8000/>.
 
 ## Configuration
 
-The app reads these environment variables. None are required to run locally - every one has a
-development-only default - but a real deployment should set all of them explicitly.
+The app reads these environment variables. Each has a development-only default below, but a real
+deployment should set all of them explicitly. `DATABASE_URL` is the exception: its default is never
+actually used - `compose.yaml` overrides it for the full container stack, and running the app
+locally you must set it yourself, as shown in [Start locally](#start-locally) above.
 
-| Variable            | What it's for                                                                 | Default (local only)                              |
+| Variable            | What it's for                                                                 | Default (dev only, see note above for `DATABASE_URL`) |
 |----------------------|-------------------------------------------------------------------------------|-----------------------------------------------------|
-| `DATABASE_URL`       | Where to find Postgres.                                                       | `postgresql://spacey:spacey@localhost:5432/spacey`  |
+| `DATABASE_URL`       | Where to find Postgres.                                                       | `postgresql://spacey:spacey@localhost:5432/spacey`   |
 | `APP_REVISION`       | Shown by `GET /health`, so a deployment can confirm which commit is live.     | `local`                                              |
 | `RESET_DB_ON_START`  | If `true`, wipes all tables on startup. Used by tests; never set this in a real deployment or you will delete real data. | `false` |
 | `SECRET_KEY`         | Signs the login session cookie. **Must** be set to a real secret in any deployment - the default is public (it's printed right here in this file), so anyone could forge a session cookie claiming to be any user. The app would still run fine without it set, which is exactly what makes this easy to forget. | `dev-secret-key-not-for-production` |
