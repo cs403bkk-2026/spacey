@@ -13,3 +13,12 @@ def calculate_booking_price_cents(
     """
     seconds = int((end_time - start_time).total_seconds())
     return (hourly_rate_cents * seconds + 1800) // 3600
+
+
+def is_valid_capacity(capacity) -> bool:
+    # bool is a subclass of int in Python, so rule out true/false
+    return (
+        isinstance(capacity, int)
+        and not isinstance(capacity, bool)
+        and capacity >= 1
+    )
