@@ -41,7 +41,7 @@ DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey pytest
 DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey flask --app app run --port 5001 --debug
 ```
 
-Open <http://127.0.0.1:5001/>. The health check is at <http://127.0.0.1:5001/health>.
+Open <http://127.0.0.1:5001/>. <br>The health check is at <http://127.0.0.1:5001/health>.
 
 A few things that trip people up the first time:
 
@@ -85,7 +85,7 @@ instead of a raw stack trace.
 2. GitHub Actions installs dependencies and runs the tests.
 3. After review, merge the pull request to `main`.
 4. Once the deployment environment is enabled, GitHub Actions builds the exact merged revision,
-   publishes its container image, and submits the Nomad job.
+  publishes its container image, and submits the Nomad job.
 5. Check the permanent URL and its `/health` response. `revision` must equal the merged commit.
 
 Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -103,6 +103,7 @@ A few routes render an HTML page for a browser instead of JSON, and aren't part 
 | GET    | `/`                                 | Space list with a booking form on each; shows login state            |
 | GET    | `/register`, `/login`               | Plain sign-up / log-in forms                                         |
 | POST   | `/spaces/<id>/book`                 | Target of the homepage's booking form                                |
+| GET    | `/bookings/mine`                    | Logged-in member's bookings, each linking to its confirmation page; redirects to `/login` if logged out |
 | GET    | `/bookings/<id>/confirmation`       | Booking details, price, and Pay / Unlock buttons                     |
 | POST   | `/bookings/<id>/confirmation/pay`   | Target of the confirmation page's Pay button                         |
 | POST   | `/bookings/<id>/confirmation/unlock`| Target of the confirmation page's Unlock button                      |
@@ -140,7 +141,7 @@ Do not wait for the kickoff meeting.
 4. Merge one small user-visible change and verify its revision at the permanent URL.
 5. Append the first entry to [STARTUP_LOG.md](STARTUP_LOG.md).
 6. Post unresolved blockers in Slack using the format in
-   [CONTRIBUTING.md](CONTRIBUTING.md).
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Keep secrets out of GitHub
 
