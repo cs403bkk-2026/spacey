@@ -1,12 +1,32 @@
-from datetime import timezone
+import re
+from datetime import datetime, timezone
 
-from flask import jsonify, request
-
-from validation import validate_card
+CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
+CVC_RE = re.compile(r"^\d{3,4}$")
+EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
 
 
 def member_key(name: str) -> str:
     return name.strip().lower()
+
+
+def validate_card(card_number, expiry, cvc) -> str | None:
+    """Returns an error message, or None if the (mocked) card looks valid -
+    right shape and not expired, not a real Luhn/network check."""
+    if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
+        return "card_number must be 13-19 digits"
+    if not isinstance(cvc, str) or not CVC_RE.match(cvc):
+        return "cvc must be 3 or 4 digits"
+    if not isinstance(expiry, str):
+        return "expiry must be in MM/YY format"
+    match = EXPIRY_RE.match(expiry)
+    if match is None:
+        return "expiry must be in MM/YY format"
+    month, year = int(match.group(1)), 2000 + int(match.group(2))
+    now = datetime.now(timezone.utc)
+    if (year, month) < (now.year, now.month):
+        return "card has expired"
+    return None
 
 
 def mark_booking_paid(app, booking_id, card_number, expiry, cvc, force_failure=False):
@@ -44,38 +64,3 @@ def mark_booking_paid(app, booking_id, card_number, expiry, cvc, force_failure=F
         row = cur.fetchone()
 
     return row, 200
-
-
-def pay_booking(booking_id):
-    body = request.get_json(silent=True) or {}
-    payload, status = mark_booking_paid(
-        booking_id,
-        body.get("card_number"),
-        body.get("expiry"),
-        body.get("cvc"),
-        force_failure=body.get("force_failure") is True,
-    )
-    return jsonify(payload), status
-
-
-def subscribe_member(name):
-    # Mocked, like payment: no provider, always succeeds. Subscribing
-    # again is a no-op, so a retried request can't break anything.
-    member = member_key(name)
-    if not member:
-        return jsonify(error="member name must not be blank"), 400
-
-    with app.db.cursor() as cur:
-        cur.execute(
-            "INSERT INTO subscriptions (member) VALUES (%s) "
-            "ON CONFLICT (member) DO UPDATE SET active = TRUE "
-            "RETURNING member, active, started_at",
-            (member,),
-        )
-        row = cur.fetchone()
-
-    return jsonify(
-        member=row["member"],
-        active=row["active"],
-        started_at=row["started_at"].astimezone(timezone.utc).isoformat(),
-    )
