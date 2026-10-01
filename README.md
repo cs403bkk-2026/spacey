@@ -82,6 +82,7 @@ A few routes render an HTML page for a browser instead of JSON, and aren't part 
 | GET    | `/`                                 | Space list with a booking form on each; shows login state            |
 | GET    | `/register`, `/login`               | Plain sign-up / log-in forms                                         |
 | POST   | `/spaces/<id>/book`                 | Target of the homepage's booking form                                |
+| GET    | `/bookings/mine`                    | Logged-in member's bookings, each linking to its confirmation page; redirects to `/login` if logged out |
 | GET    | `/bookings/<id>/confirmation`       | Booking details, price, and Pay / Unlock buttons                     |
 | POST   | `/bookings/<id>/confirmation/pay`   | Target of the confirmation page's Pay button                         |
 | POST   | `/bookings/<id>/confirmation/unlock`| Target of the confirmation page's Unlock button                      |
