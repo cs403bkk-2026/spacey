@@ -8,7 +8,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
-from payment.services import mark_booking_paid
+from payment.services import mark_booking_paid, pay_booking as pay_booking_service
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -956,14 +956,8 @@ def create_app(
 
     @app.post("/bookings/<int:booking_id>/pay")
     def pay_booking(booking_id):
-        body = request.get_json(silent=True) or {}
-        payload, status = mark_booking_paid(
-            app,
-            booking_id,
-            body.get("card_number"),
-            body.get("expiry"),
-            body.get("cvc"),
-            force_failure=body.get("force_failure") is True,
+        payload, status = pay_booking_service(
+            app, booking_id, request.get_json(silent=True) or {}
         )
         return jsonify(payload), status
 
