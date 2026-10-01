@@ -9,7 +9,6 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from purchase import calculate_booking_price_cents, is_valid_capacity
 from access import issue_access_code
 from purchase import is_valid_capacity, member_key, purchase_booking
 
