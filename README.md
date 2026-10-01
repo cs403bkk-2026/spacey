@@ -64,7 +64,7 @@ instead of a raw stack trace.
 2. GitHub Actions installs dependencies and runs the tests.
 3. After review, merge the pull request to `main`.
 4. Once the deployment environment is enabled, GitHub Actions builds the exact merged revision,
-   publishes its container image, and submits the Nomad job.
+  publishes its container image, and submits the Nomad job.
 5. Check the permanent URL and its `/health` response. `revision` must equal the merged commit.
 
 Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -120,7 +120,7 @@ Do not wait for the kickoff meeting.
 4. Merge one small user-visible change and verify its revision at the permanent URL.
 5. Append the first entry to [STARTUP_LOG.md](STARTUP_LOG.md).
 6. Post unresolved blockers in Slack using the format in
-   [CONTRIBUTING.md](CONTRIBUTING.md).
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Keep secrets out of GitHub
 

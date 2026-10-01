@@ -371,12 +371,12 @@ def test_list_spaces_returns_the_seed_space():
     assert response.get_json() == {
         "spaces": [
             {
-                "id": 1, 
+                "id": 1,
                 "name": "Founders Desk",
                 "capacity": 1,
                 "price_cents": 2500,
                 "available": True
-             }
+            }
         ]
     }
 
