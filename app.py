@@ -1,7 +1,7 @@
 import os
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -10,7 +10,16 @@ from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from access import issue_access_code
-from purchase import is_valid_capacity, is_valid_name, is_valid_price, purchase_booking, subscribe
+from purchase.booking import (
+    LOCAL_TZ,
+    booking_to_json,
+    create_booking,
+    parse_form_time,
+    parse_time,
+    parse_window,
+)
+from purchase.member import subscribe
+from purchase.space import booked_space_ids, is_valid_capacity, is_valid_name, is_valid_price
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -142,66 +151,6 @@ def get_connection(database_url: str) -> psycopg.Connection:
     return conn
 
 
-def parse_time(value) -> datetime | None:
-    """ISO 8601 with a timezone, e.g. 2026-09-25T09:00:00+07:00."""
-    try:
-        parsed = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed
-
-
-def parse_window(args) -> tuple[tuple | None, str | None]:
-    """Optional ?start_time=&end_time= as (window, error); window is None if absent."""
-    raw_start, raw_end = args.get("start_time"), args.get("end_time")
-    if raw_start is None and raw_end is None:
-        return None, None
-    start_time, end_time = parse_time(raw_start), parse_time(raw_end)
-    if start_time is None or end_time is None:
-        return None, (
-            "start_time and end_time must be given together "
-            "(ISO 8601 with timezone, e.g. 2026-09-25T09:00:00Z)"
-        )
-    if end_time <= start_time:
-        return None, "end_time must be after start_time"
-    return (start_time, end_time), None
-
-
-def booked_space_ids(cur, window) -> set:
-    """Spaces booked during the window, or booked right now if no window."""
-    if window is None:
-        cur.execute(
-            "SELECT DISTINCT space_id FROM bookings "
-            "WHERE start_time <= now() AND end_time > now()"
-        )
-    else:
-        start_time, end_time = window
-        # Same overlap rule as booking creation: back-to-back is not a clash.
-        cur.execute(
-            "SELECT DISTINCT space_id FROM bookings "
-            "WHERE start_time < %s AND end_time > %s",
-            (end_time, start_time),
-        )
-    return {row["space_id"] for row in cur.fetchall()}
-
-
-LOCAL_TZ = timezone(timedelta(hours=7))  # Bangkok, no daylight saving
-
-
-def parse_form_time(value) -> datetime | None:
-    """The browser's datetime-local field sends no timezone (2026-09-25T09:00),
-    so times typed into the booking form are read as Bangkok time."""
-    try:
-        parsed = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=LOCAL_TZ)
-    return parsed
-
-
 # Deliberately simple: good enough to catch a typo, not full RFC 5322.
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -241,15 +190,6 @@ def validate_card(card_number, expiry, cvc) -> str | None:
 def local_time(value: datetime) -> str:
     """For the HTML pages: Bangkok time, no seconds or offset clutter."""
     return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
-
-
-def booking_to_json(row: dict) -> dict:
-    return {
-        **row,
-        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
-        "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
-        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
-    }
 
 
 def compute_metrics(cur) -> dict:
@@ -681,7 +621,7 @@ def create_app(
         Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             # Linked to the account if one is logged in; NULL for a guest.
-            payload, status = purchase_booking(
+            payload, status = create_booking(
                 cur, space_id, member, start_time, end_time, party_size,
                 session.get("user_id"),
             )
@@ -690,7 +630,7 @@ def create_app(
         return payload, status
 
     @app.post("/spaces/<int:space_id>/bookings")
-    def create_booking(space_id):
+    def create_booking_from_json(space_id):
         body = request.get_json(silent=True) or {}
         start_time = parse_time(body.get("start_time"))
         end_time = parse_time(body.get("end_time"))
