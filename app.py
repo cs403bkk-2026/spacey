@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from access import issue_access_code
-from purchase import is_valid_capacity, member_key, purchase_booking
+from purchase import is_valid_capacity, is_valid_name, is_valid_price, purchase_booking, subscribe
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -200,15 +200,6 @@ def parse_form_time(value) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=LOCAL_TZ)
     return parsed
-
-
-def is_valid_name(name) -> bool:
-    return isinstance(name, str) and name.strip() != ""
-
-
-
-def is_valid_price(price) -> bool:
-    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
 
 
 # Deliberately simple: good enough to catch a typo, not full RFC 5322.
@@ -914,26 +905,9 @@ def create_app(
 
     @app.post("/members/<name>/subscribe")
     def subscribe_member(name):
-        # Mocked, like payment: no provider, always succeeds. Subscribing
-        # again is a no-op, so a retried request can't break anything.
-        member = member_key(name)
-        if not member:
-            return jsonify(error="member name must not be blank"), 400
-
         with app.db.cursor() as cur:
-            cur.execute(
-                "INSERT INTO subscriptions (member) VALUES (%s) "
-                "ON CONFLICT (member) DO UPDATE SET active = TRUE "
-                "RETURNING member, active, started_at",
-                (member,),
-            )
-            row = cur.fetchone()
-
-        return jsonify(
-            member=row["member"],
-            active=row["active"],
-            started_at=row["started_at"].astimezone(timezone.utc).isoformat(),
-        )
+            payload, status = subscribe(cur, name)
+        return jsonify(payload), status
 
     @app.get("/metrics")
     def metrics():
