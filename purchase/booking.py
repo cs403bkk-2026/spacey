@@ -1,8 +1,10 @@
-"""Purchase rules: booking a space, its price and subscription coverage."""
+"""Booking helpers: parsing times, pricing and booking a space."""
 
 from datetime import datetime, timezone
 
 from psycopg.errors import DeadlockDetected, ExclusionViolation
+
+from purchase.member import is_subscribed
 
 
 def calculate_booking_price_cents(
@@ -17,60 +19,7 @@ def calculate_booking_price_cents(
     return (hourly_rate_cents * seconds + 1800) // 3600
 
 
-def is_valid_capacity(capacity) -> bool:
-    # bool is a subclass of int in Python, so rule out true/false
-    return (
-        isinstance(capacity, int)
-        and not isinstance(capacity, bool)
-        and capacity >= 1
-    )
-
-
-def is_valid_name(name) -> bool:
-    return isinstance(name, str) and name.strip() != ""
-
-
-def is_valid_price(price) -> bool:
-    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
-
-
-def member_key(name: str) -> str:
-    return name.strip().lower()
-
-
-def is_subscribed(cur, member) -> bool:
-    if not isinstance(member, str):
-        return False
-    cur.execute(
-        "SELECT 1 FROM subscriptions WHERE member = %s AND active",
-        (member_key(member),),
-    )
-    return cur.fetchone() is not None
-
-
-def subscribe(cur, name):
-    """Subscribe a member by name. Mocked, like payment: no provider, always
-    succeeds. Subscribing again is a no-op, so a retried request can't break
-    anything. Returns (payload, status)."""
-    member = member_key(name)
-    if not member:
-        return {"error": "member name must not be blank"}, 400
-
-    cur.execute(
-        "INSERT INTO subscriptions (member) VALUES (%s) "
-        "ON CONFLICT (member) DO UPDATE SET active = TRUE "
-        "RETURNING member, active, started_at",
-        (member,),
-    )
-    row = cur.fetchone()
-    return {
-        "member": row["member"],
-        "active": row["active"],
-        "started_at": row["started_at"].astimezone(timezone.utc).isoformat(),
-    }, 200
-
-
-def purchase_booking(cur, space_id, member, start_time, end_time, party_size, user_id):
+def create_booking(cur, space_id, member, start_time, end_time, party_size, user_id):
     """Book a space for a member; user_id is the logged-in account or None.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
     cur.execute(
@@ -138,3 +87,39 @@ def purchase_booking(cur, space_id, member, start_time, end_time, party_size, us
         # case; this only fires when two requests raced past it.
         return {"error": "space is already booked for that time"}, 409
     return cur.fetchone(), 201
+
+
+def parse_time(value) -> datetime | None:
+    """ISO 8601 with a timezone, e.g. 2026-09-25T09:00:00+07:00."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def parse_window(args) -> tuple[tuple | None, str | None]:
+    """Optional ?start_time=&end_time= as (window, error); window is None if absent."""
+    raw_start, raw_end = args.get("start_time"), args.get("end_time")
+    if raw_start is None and raw_end is None:
+        return None, None
+    start_time, end_time = parse_time(raw_start), parse_time(raw_end)
+    if start_time is None or end_time is None:
+        return None, (
+            "start_time and end_time must be given together "
+            "(ISO 8601 with timezone, e.g. 2026-09-25T09:00:00Z)"
+        )
+    if end_time <= start_time:
+        return None, "end_time must be after start_time"
+    return (start_time, end_time), None
+
+
+def booking_to_json(row: dict) -> dict:
+    return {
+        **row,
+        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
+        "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
+        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
+    }
