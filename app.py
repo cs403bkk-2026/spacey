@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from access import issue_access_code
-from purchase import is_valid_capacity, member_key, purchase_booking
+from purchase import is_valid_capacity, is_valid_name, is_valid_price, member_key, purchase_booking
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -200,15 +200,6 @@ def parse_form_time(value) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=LOCAL_TZ)
     return parsed
-
-
-def is_valid_name(name) -> bool:
-    return isinstance(name, str) and name.strip() != ""
-
-
-
-def is_valid_price(price) -> bool:
-    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
 
 
 # Deliberately simple: good enough to catch a typo, not full RFC 5322.

@@ -26,6 +26,14 @@ def is_valid_capacity(capacity) -> bool:
     )
 
 
+def is_valid_name(name) -> bool:
+    return isinstance(name, str) and name.strip() != ""
+
+
+def is_valid_price(price) -> bool:
+    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
+
+
 def member_key(name: str) -> str:
     return name.strip().lower()
 
