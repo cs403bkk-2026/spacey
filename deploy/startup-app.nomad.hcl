@@ -14,6 +14,9 @@ job "spacey" {
   datacenters = ["cs403bkk"]
   namespace   = "startup"
   type        = "service"
+  meta = {
+    revision = var.revision
+  }
 
   group "web" {
     count = 1
