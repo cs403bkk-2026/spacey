@@ -68,6 +68,20 @@ def get_connection(database_url: str) -> psycopg.Connection:
             )
             """
         )
+        # The access code handed out when a booking is unlocked (#171).
+        # One code per booking, kept so a page refresh shows the same code
+        # instead of a new one. ON DELETE CASCADE because cancelling a
+        # booking deletes its row, and the code is worthless without it.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS access (
+                booking_id INTEGER PRIMARY KEY
+                    REFERENCES bookings (id) ON DELETE CASCADE,
+                access_code TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
         # First step of #120 (real accounts): just registration for now.
         # Storing only a hash, never the password itself.
         cur.execute(
@@ -335,7 +349,7 @@ def reset_tables(conn: psycopg.Connection) -> None:
     deployment's data survives an app restart."""
     with conn.cursor() as cur:
         cur.execute(
-            "TRUNCATE bookings, spaces, subscriptions, users "
+            "TRUNCATE access, bookings, spaces, subscriptions, users "
             "RESTART IDENTITY CASCADE"
         )
 

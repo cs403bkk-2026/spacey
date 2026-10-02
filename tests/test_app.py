@@ -935,6 +935,37 @@ def test_unlock_a_paid_booking_returns_an_access_code():
     assert body["booking_id"] == created["id"]
     assert len(body["access_code"]) > 0
 
+def test_unlocking_twice_returns_the_same_stored_code():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/bookings/1/pay", json=VALID_CARD)
+
+    first = client.post("/bookings/1/unlock").get_json()["access_code"]
+    second = client.post("/bookings/1/unlock").get_json()["access_code"]
+
+    assert first == second
+
+def test_the_access_code_survives_a_restart():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/bookings/1/pay", json=VALID_CARD)
+    code = client.post("/bookings/1/unlock").get_json()["access_code"]
+
+    # a second app instance, same database - as after a redeploy
+    restarted = create_app(reset_on_start=False).test_client()
+
+    assert restarted.post("/bookings/1/unlock").get_json()["access_code"] == code
+
+def test_cancelling_a_booking_removes_its_access_code():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/bookings/1/pay", json=VALID_CARD)
+    client.post("/bookings/1/unlock")
+
+    # the access row references the booking, so the delete has to cascade
+    assert client.delete("/bookings/1").status_code == 200
+    assert client.post("/bookings/1/unlock").status_code == 404
+
 def test_unlock_unknown_booking_returns_404():
     client = make_client()
 
