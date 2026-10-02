@@ -26,12 +26,23 @@ def is_valid_capacity(capacity) -> bool:
     )
 
 
+def member_key(name: str) -> str:
+    return name.strip().lower()
+
+
+def is_subscribed(cur, member) -> bool:
+    if not isinstance(member, str):
+        return False
+    cur.execute(
+        "SELECT 1 FROM subscriptions WHERE member = %s AND active",
+        (member_key(member),),
+    )
+    return cur.fetchone() is not None
+
+
 def purchase_booking(cur, space_id, member, start_time, end_time, party_size, user_id):
     """Book a space for a member; user_id is the logged-in account or None.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
-    # Imported here because app.py imports this module (circular otherwise).
-    from app import is_subscribed
-
     cur.execute(
         "SELECT id, capacity, price_cents FROM spaces WHERE id = %s",
         (space_id,),
