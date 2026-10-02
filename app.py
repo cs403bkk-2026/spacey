@@ -9,7 +9,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from purchase import is_valid_capacity, purchase_booking
+from purchase import is_valid_capacity, purchase_booking, subscribe
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -244,20 +244,6 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     if (year, month) < (now.year, now.month):
         return "card has expired"
     return None
-
-
-def member_key(name: str) -> str:
-    return name.strip().lower()
-
-
-def is_subscribed(cur, member) -> bool:
-    if not isinstance(member, str):
-        return False
-    cur.execute(
-        "SELECT 1 FROM subscriptions WHERE member = %s AND active",
-        (member_key(member),),
-    )
-    return cur.fetchone() is not None
 
 
 def local_time(value: datetime) -> str:
@@ -943,26 +929,9 @@ def create_app(
 
     @app.post("/members/<name>/subscribe")
     def subscribe_member(name):
-        # Mocked, like payment: no provider, always succeeds. Subscribing
-        # again is a no-op, so a retried request can't break anything.
-        member = member_key(name)
-        if not member:
-            return jsonify(error="member name must not be blank"), 400
-
         with app.db.cursor() as cur:
-            cur.execute(
-                "INSERT INTO subscriptions (member) VALUES (%s) "
-                "ON CONFLICT (member) DO UPDATE SET active = TRUE "
-                "RETURNING member, active, started_at",
-                (member,),
-            )
-            row = cur.fetchone()
-
-        return jsonify(
-            member=row["member"],
-            active=row["active"],
-            started_at=row["started_at"].astimezone(timezone.utc).isoformat(),
-        )
+            payload, status = subscribe(cur, name)
+        return jsonify(payload), status
 
     @app.get("/metrics")
     def metrics():
