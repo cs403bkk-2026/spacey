@@ -102,13 +102,18 @@ jobs:
       - name: Verify the deployed revision
         if: steps.freshness.outputs.deploy == 'true'
         env:
-          APP_URL: https://${{ vars.APP_HOSTNAME }}
+          NOMAD_ADDR: ${{ secrets.NOMAD_ADDR }}
+          NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
           EXPECTED_REVISION: ${{ github.sha }}
         run: |
           for attempt in {1..36}; do
-            actual_revision="$(curl --fail --silent --show-error "${APP_URL}/health" | jq --raw-output '.revision' 2>/dev/null || true)"
-            if [ "${actual_revision}" = "${EXPECTED_REVISION}" ]; then
-              exit 0
+            status_json="$(nomad job status -namespace=startup -json spacey 2>/dev/null || true)"
+            if [ -n "${status_json}" ]; then
+              deployed_revision="$(jq --raw-output '.Meta.revision // empty' <<<"${status_json}")"
+              deployment_stable="$(jq --raw-output '.Stable' <<<"${status_json}")"
+              if [ "${deployed_revision}" = "${EXPECTED_REVISION}" ] && [ "${deployment_stable}" = "true" ]; then
+                exit 0
+              fi
             fi
             sleep 5
           done
