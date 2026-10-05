@@ -5,13 +5,12 @@ from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
-from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
-from werkzeug.security import check_password_hash, generate_password_hash
 
 from access import issue_access_code
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
+import purchase.member
 import purchase.space
 from purchase.booking import LOCAL_TZ, parse_form_time
 from purchase.member import subscribe
@@ -167,18 +166,6 @@ def get_connection(database_url: str) -> psycopg.Connection:
     return conn
 
 
-# Deliberately simple: good enough to catch a typo, not full RFC 5322.
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def is_valid_email(email) -> bool:
-    return isinstance(email, str) and EMAIL_RE.match(email.strip()) is not None
-
-
-def is_valid_password(password) -> bool:
-    return isinstance(password, str) and len(password) >= 8
-
-
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
 EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
@@ -332,17 +319,6 @@ def reset_tables(conn: psycopg.Connection) -> None:
         )
 
 
-def seed_starter_space(conn: psycopg.Connection) -> None:
-    with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS count FROM spaces")
-        if cur.fetchone()["count"] == 0:
-            cur.execute(
-                "INSERT INTO spaces (name, capacity, price_cents) "
-                "VALUES (%s, %s, %s)",
-                ("Founders Desk", 1, 2500),  # $25.00 per hour
-            )
-
-
 def create_app(
     database_url: str = DATABASE_URL, reset_on_start: bool | None = None
 ) -> Flask:
@@ -355,7 +331,8 @@ def create_app(
     app.db = get_connection(database_url)
     if reset_on_start:
         reset_tables(app.db)
-    seed_starter_space(app.db)
+    with app.db.cursor() as cur:
+        purchase.space.seed_starter_space(cur)
 
     # HTML pages live in templates/ (all extending base.html) and the look
     # in static/style.css. Jinja escapes every {{ value }} automatically.
@@ -371,13 +348,11 @@ def create_app(
             return {"current_user_email": None}
 
         with app.db.cursor() as cur:
-            cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-            user = cur.fetchone()
-        if user is None:
+            email = purchase.member.find_user_email(cur, user_id)
+        if email is None:
             # stale session, e.g. after a DB reset
             session.pop("user_id", None)
-            return {"current_user_email": None}
-        return {"current_user_email": user["email"]}
+        return {"current_user_email": email}
 
     @app.get("/")
     def index():
@@ -408,30 +383,6 @@ def create_app(
             error=request.args.get("error"),
         )
 
-    def register_user(email, password):
-        """Shared by the JSON API and the HTML register form.
-        Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
-        if not is_valid_email(email):
-            return {"error": "enter a valid email address"}, 400
-        if not is_valid_password(password):
-            return {"error": "password must be at least 8 characters"}, 400
-
-        email = email.strip().lower()
-        password_hash = generate_password_hash(password)
-
-        with app.db.cursor() as cur:
-            try:
-                cur.execute(
-                    "INSERT INTO users (email, password_hash) VALUES (%s, %s) "
-                    "RETURNING id, email",
-                    (email, password_hash),
-                )
-            except UniqueViolation:
-                return {"error": "email is already registered"}, 409
-            user = cur.fetchone()
-
-        return user, 201
-
     @app.get("/register")
     def register_form():
         return render_template(
@@ -444,38 +395,18 @@ def create_app(
     def register():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = register_user(
-                body.get("email"), body.get("password"))
+        else:
+            body = request.form
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.register_user(
+                cur, body.get("email"), body.get("password")
+            )
+        if request.is_json:
             return jsonify(payload), status
 
-        payload, status = register_user(
-            request.form.get("email"), request.form.get("password")
-        )
         if status >= 400:
             return redirect(url_for("register_form", error=payload["error"]))
         return redirect(url_for("login_form", message="Registered! Please log in."))
-
-    def login_user(email, password):
-        """Shared by the JSON API and the HTML login form.
-        Returns (payload, status) - {"id": ..., "email": ...}, or an error.
-        Wrong password and unknown email give the identical error, so a
-        failed attempt can't be used to find out which emails are registered."""
-        invalid = {"error": "invalid email or password"}, 401
-        if not isinstance(email, str) or not isinstance(password, str):
-            return invalid
-
-        with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, email, password_hash FROM users WHERE email = %s",
-                (email.strip().lower(),),
-            )
-            user = cur.fetchone()
-
-        if user is None or not check_password_hash(user["password_hash"], password):
-            return invalid
-
-        session["user_id"] = user["id"]
-        return {"id": user["id"], "email": user["email"]}, 200
 
     @app.get("/login")
     def login_form():
@@ -489,13 +420,17 @@ def create_app(
     def login():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = login_user(
-                body.get("email"), body.get("password"))
+        else:
+            body = request.form
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.authenticate(
+                cur, body.get("email"), body.get("password")
+            )
+        if status == 200:
+            session["user_id"] = payload["id"]
+        if request.is_json:
             return jsonify(payload), status
 
-        payload, status = login_user(
-            request.form.get("email"), request.form.get("password")
-        )
         if status >= 400:
             return redirect(url_for("login_form", error=payload["error"]))
         return redirect(url_for("index"))
