@@ -392,28 +392,12 @@ def create_app(
     @app.post("/spaces")
     def create_space():
         body = request.get_json(silent=True) or {}
-        name = body.get("name")
-        capacity = body.get("capacity")
-        price_cents = body.get("price_cents", 0)
-
-        if name is None or capacity is None:
-            return jsonify(error="name and capacity are required"), 400
-        if not is_valid_name(name):
-            return jsonify(error="name must not be empty"), 400
-        if not is_valid_capacity(capacity):
-            return jsonify(
-                error="capacity must be a whole number of at least 1"
-            ), 400
-        name = name.strip()
-        if not is_valid_price(price_cents):
-            return jsonify(
-                error="price_cents must be a non-negative integer"
-            ), 400
-
         with app.db.cursor() as cur:
-            space = purchase.space.create_space(cur, name, capacity, price_cents)
-
-        return jsonify(space), 201
+            payload, status = purchase.space.create_space(
+                cur, body.get("name"), body.get("capacity"),
+                body.get("price_cents", 0),
+            )
+        return jsonify(payload), status
 
     @app.get("/spaces/<int:space_id>")
     def get_space(space_id):
