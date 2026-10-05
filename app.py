@@ -10,14 +10,10 @@ from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from access import issue_access_code
-from purchase.booking import (
-    LOCAL_TZ,
-    booking_to_json,
-    create_booking,
-    parse_form_time,
-    parse_time,
-    parse_window,
-)
+# Called qualified, since route functions below reuse names like get_space.
+import purchase.booking
+import purchase.space
+from purchase.booking import LOCAL_TZ, parse_form_time
 from purchase.member import subscribe
 from purchase.space import booked_space_ids, is_valid_capacity, is_valid_name, is_valid_price
 
@@ -207,6 +203,42 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     return None
 
 
+def parse_time(value) -> datetime | None:
+    """ISO 8601 with a timezone, e.g. 2026-09-25T09:00:00+07:00."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def parse_window(args) -> tuple[tuple | None, str | None]:
+    """Optional ?start_time=&end_time= as (window, error); window is None if absent."""
+    raw_start, raw_end = args.get("start_time"), args.get("end_time")
+    if raw_start is None and raw_end is None:
+        return None, None
+    start_time, end_time = parse_time(raw_start), parse_time(raw_end)
+    if start_time is None or end_time is None:
+        return None, (
+            "start_time and end_time must be given together "
+            "(ISO 8601 with timezone, e.g. 2026-09-25T09:00:00Z)"
+        )
+    if end_time <= start_time:
+        return None, "end_time must be after start_time"
+    return (start_time, end_time), None
+
+
+def booking_to_json(row: dict) -> dict:
+    return {
+        **row,
+        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
+        "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
+        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
+    }
+
+
 def local_time(value: datetime) -> str:
     """For the HTML pages: Bangkok time, no seconds or offset clutter."""
     return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
@@ -350,8 +382,7 @@ def create_app(
     @app.get("/")
     def index():
         with app.db.cursor() as cur:
-            cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
-            rows = cur.fetchall()
+            rows = purchase.space.list_spaces(cur)
             cur.execute(
                 "SELECT DISTINCT space_id FROM bookings "
                 "WHERE start_time <= now() AND end_time > now()"
@@ -497,8 +528,7 @@ def create_app(
             return jsonify(error=error), 400
 
         with app.db.cursor() as cur:
-            cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
-            rows = cur.fetchall()
+            rows = purchase.space.list_spaces(cur)
             booked_ids = booked_space_ids(cur, window)
 
         spaces = [
@@ -528,14 +558,9 @@ def create_app(
             ), 400
 
         with app.db.cursor() as cur:
-            cur.execute(
-                "INSERT INTO spaces (name, capacity, price_cents) VALUES (%s, %s, %s) "
-                "RETURNING id",
-                (name, capacity, price_cents),
-            )
-            new_id = cur.fetchone()["id"]
+            space = purchase.space.create_space(cur, name, capacity, price_cents)
 
-        return jsonify(id=new_id, name=name, capacity=capacity, price_cents=price_cents), 201
+        return jsonify(space), 201
 
     @app.get("/spaces/<int:space_id>")
     def get_space(space_id):
@@ -544,11 +569,7 @@ def create_app(
             return jsonify(error=error), 400
 
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, name, capacity, price_cents FROM spaces WHERE id = %s",
-                (space_id,),
-            )
-            space = cur.fetchone()
+            space = purchase.space.get_space(cur, space_id)
             if space is None:
                 return jsonify(error="space not found"), 404
 
@@ -565,8 +586,7 @@ def create_app(
             ), 400
 
         with app.db.cursor() as cur:
-            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
-            if cur.fetchone() is None:
+            if purchase.space.get_space(cur, space_id) is None:
                 return jsonify(error="space not found"), 404
 
             name = body.get("name")
@@ -585,54 +605,25 @@ def create_app(
             if name is not None:
                 name = name.strip()
 
-            # COALESCE keeps the current value for fields not in the request
-            cur.execute(
-                "UPDATE spaces "
-                "SET name = COALESCE(%s, name), "
-                "capacity = COALESCE(%s, capacity), "
-                "price_cents = COALESCE(%s, price_cents) "
-                "WHERE id = %s "
-                "RETURNING id, name, capacity, price_cents",
-                (name, capacity, price_cents, space_id),
-            )
-            space = cur.fetchone()
+            space = purchase.space.update_space(cur, space_id, name, capacity, price_cents)
 
         return jsonify(space)
 
     @app.delete("/spaces/<int:space_id>")
     def delete_space(space_id):
         with app.db.cursor() as cur:
-            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
-            space = cur.fetchone()
-            if space is None:
-                return jsonify(error="space not found"), 404
-
-            cur.execute(
-                "SELECT id FROM bookings WHERE space_id = %s LIMIT 1",
-                (space_id,),
-            )
-            if cur.fetchone() is not None:
-                return jsonify(
-                    error="space has bookings, cancel them first"
-                ), 409
-
-            cur.execute("DELETE FROM spaces WHERE id = %s", (space_id,))
-
-        return "", 204
+            payload, status = purchase.space.delete_space(cur, space_id)
+        if payload is None:
+            return "", status
+        return jsonify(payload), status
 
     @app.get("/spaces/<int:space_id>/bookings")
     def list_space_bookings(space_id):
         with app.db.cursor() as cur:
-            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
-            if cur.fetchone() is None:
+            if purchase.space.get_space(cur, space_id) is None:
                 return jsonify(error="space not found"), 404
 
-            cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
-                "FROM bookings WHERE space_id = %s ORDER BY start_time",
-                (space_id,),
-            )
-            rows = cur.fetchall()
+            rows = purchase.booking.list_space_bookings(cur, space_id)
 
         return jsonify(bookings=[booking_to_json(row) for row in rows])
 
@@ -641,7 +632,7 @@ def create_app(
         Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             # Linked to the account if one is logged in; NULL for a guest.
-            payload, status = create_booking(
+            payload, status = purchase.booking.create_booking(
                 cur, space_id, member, start_time, end_time, party_size,
                 session.get("user_id"),
             )
@@ -663,7 +654,7 @@ def create_app(
 
         payload, status = book_space(
             space_id,
-            body.get("member") or "guest",
+            body.get("member"),
             start_time,
             end_time,
             body.get("party_size", 1),
@@ -674,7 +665,7 @@ def create_app(
     def book_from_form(space_id):
         """The homepage form posts here, then we send the browser back to
         the space list - with a message, since a form can't read JSON."""
-        member = request.form.get("member", "").strip() or "guest"
+        member = request.form.get("member")
         start_time = parse_form_time(request.form.get("start_time"))
         end_time = parse_form_time(request.form.get("end_time"))
 
@@ -769,23 +760,27 @@ def create_app(
     @app.get("/bookings")
     def list_bookings():
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
-                "FROM bookings ORDER BY start_time"
-            )
-            rows = cur.fetchall()
+            rows = purchase.booking.list_bookings(cur)
+
+        return jsonify(bookings=[booking_to_json(row) for row in rows])
+
+    @app.get("/me/bookings")
+    def list_my_bookings():
+        """The logged-in account's bookings, so the client never has to
+        fetch everyone's and filter them itself."""
+        user_id = session.get("user_id")
+        if user_id is None:
+            return jsonify(error="log in to see your bookings"), 401
+
+        with app.db.cursor() as cur:
+            rows = purchase.booking.list_user_bookings(cur, user_id)
 
         return jsonify(bookings=[booking_to_json(row) for row in rows])
 
     @app.get("/bookings/<int:booking_id>")
     def find_booking(booking_id):
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
-                "FROM bookings WHERE id = %s",
-                (booking_id,),
-            )
-            row = cur.fetchone()
+            row = purchase.booking.get_booking(cur, booking_id)
 
         if row is None:
             return jsonify(error="booking not found"), 404
@@ -795,12 +790,7 @@ def create_app(
     @app.delete("/bookings/<int:booking_id>")
     def cancel_booking(booking_id):
         with app.db.cursor() as cur:
-            cur.execute(
-                "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at",
-                (booking_id,),
-            )
-            row = cur.fetchone()
+            row = purchase.booking.cancel_booking(cur, booking_id)
 
         if row is None:
             return jsonify(error="booking not found"), 404
