@@ -62,6 +62,13 @@ def authenticate(cur, email, password):
     return {"id": user["id"], "email": user["email"]}, 200
 
 
+
+def find_user_email(cur, user_id) -> str | None:
+    cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+    user = cur.fetchone()
+    return None if user is None else user["email"]
+
+
 def member_key(name: str) -> str:
     return name.strip().lower()
 

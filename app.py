@@ -358,13 +358,11 @@ def create_app(
             return {"current_user_email": None}
 
         with app.db.cursor() as cur:
-            cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-            user = cur.fetchone()
-        if user is None:
+            email = purchase.member.find_user_email(cur, user_id)
+        if email is None:
             # stale session, e.g. after a DB reset
             session.pop("user_id", None)
-            return {"current_user_email": None}
-        return {"current_user_email": user["email"]}
+        return {"current_user_email": email}
 
     @app.get("/")
     def index():
