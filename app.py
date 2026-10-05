@@ -313,17 +313,6 @@ def reset_tables(conn: psycopg.Connection) -> None:
         )
 
 
-def seed_starter_space(conn: psycopg.Connection) -> None:
-    with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS count FROM spaces")
-        if cur.fetchone()["count"] == 0:
-            cur.execute(
-                "INSERT INTO spaces (name, capacity, price_cents) "
-                "VALUES (%s, %s, %s)",
-                ("Founders Desk", 1, 2500),  # $25.00 per hour
-            )
-
-
 def create_app(
     database_url: str = DATABASE_URL, reset_on_start: bool | None = None
 ) -> Flask:
@@ -336,7 +325,8 @@ def create_app(
     app.db = get_connection(database_url)
     if reset_on_start:
         reset_tables(app.db)
-    seed_starter_space(app.db)
+    with app.db.cursor() as cur:
+        purchase.space.seed_starter_space(cur)
 
     @app.get("/")
     def index():
