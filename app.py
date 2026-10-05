@@ -5,9 +5,12 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
-from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from access import issue_access_code
+from purchase import is_valid_capacity, is_valid_name, is_valid_price, purchase_booking, subscribe
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -17,10 +20,17 @@ DATABASE_URL = os.getenv(
 # everyone out and, worse, an unset default would be a known, public key.
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-not-for-production")
 
+# Business metrics now live in Grafana (#207). /dashboard redirects there and the
+# nav links to it; /metrics (JSON) stays part of the API.
+REPORTING_URL = os.getenv(
+    "REPORTING_URL", "https://grafana.cs403bkk26.space/d/spacey-reporting"
+)
+
 
 def get_connection(database_url: str) -> psycopg.Connection:
     try:
-        conn = psycopg.connect(database_url, row_factory=dict_row, autocommit=True)
+        conn = psycopg.connect(
+            database_url, row_factory=dict_row, autocommit=True)
     except psycopg.OperationalError as error:
         # A raw psycopg traceback here is the first thing a new contributor
         # sees if Postgres isn't running yet - fail fast with a clear pointer
@@ -61,6 +71,20 @@ def get_connection(database_url: str) -> psycopg.Connection:
                 member TEXT PRIMARY KEY,
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 started_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        # The access code handed out when a booking is unlocked (#171).
+        # One code per booking, kept so a page refresh shows the same code
+        # instead of a new one. ON DELETE CASCADE because cancelling a
+        # booking deletes its row, and the code is worthless without it.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS access (
+                booking_id INTEGER PRIMARY KEY
+                    REFERENCES bookings (id) ON DELETE CASCADE,
+                access_code TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
@@ -198,31 +222,6 @@ def parse_form_time(value) -> datetime | None:
     return parsed
 
 
-def amount_for(price_cents: int, start_time: datetime, end_time: datetime) -> int:
-    """A space's price_cents is a per-hour rate, so a 3-hour booking costs
-    three times a 1-hour one. Integer maths, rounding half up, so we never
-    hand out fractions of a cent."""
-    seconds = int((end_time - start_time).total_seconds())
-    return (price_cents * seconds + 1800) // 3600
-
-
-def is_valid_name(name) -> bool:
-    return isinstance(name, str) and name.strip() != ""
-
-
-def is_valid_capacity(capacity) -> bool:
-    # bool is a subclass of int in Python, so rule out true/false
-    return (
-        isinstance(capacity, int)
-        and not isinstance(capacity, bool)
-        and capacity >= 1
-    )
-
-
-def is_valid_price(price) -> bool:
-    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
-
-
 # Deliberately simple: good enough to catch a typo, not full RFC 5322.
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -259,20 +258,6 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     return None
 
 
-def member_key(name: str) -> str:
-    return name.strip().lower()
-
-
-def is_subscribed(cur, member) -> bool:
-    if not isinstance(member, str):
-        return False
-    cur.execute(
-        "SELECT 1 FROM subscriptions WHERE member = %s AND active",
-        (member_key(member),),
-    )
-    return cur.fetchone() is not None
-
-
 def local_time(value: datetime) -> str:
     """For the HTML pages: Bangkok time, no seconds or offset clutter."""
     return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
@@ -285,6 +270,7 @@ def booking_to_json(row: dict) -> dict:
         "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
         "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
     }
+
 
 def compute_metrics(cur) -> dict:
     cur.execute("SELECT COUNT(*) AS count FROM spaces")
@@ -362,15 +348,17 @@ def compute_metrics(cur) -> dict:
         "revenue_by_space": revenue_by_space,
     }
 
+
 def reset_tables(conn: psycopg.Connection) -> None:
     """Wipe all rows and restart ids. Only used for tests and an opt-in
     local reset (RESET_DB_ON_START=true) - off by default, so a real
     deployment's data survives an app restart."""
     with conn.cursor() as cur:
         cur.execute(
-            "TRUNCATE bookings, spaces, subscriptions, users "
+            "TRUNCATE access, bookings, spaces, subscriptions, users "
             "RESTART IDENTITY CASCADE"
         )
+
 
 def seed_starter_space(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
@@ -382,11 +370,13 @@ def seed_starter_space(conn: psycopg.Connection) -> None:
                 ("Founders Desk", 1, 2500),  # $25.00 per hour
             )
 
+
 def create_app(
     database_url: str = DATABASE_URL, reset_on_start: bool | None = None
 ) -> Flask:
     if reset_on_start is None:
-        reset_on_start = os.getenv("RESET_DB_ON_START", "false").lower() == "true"
+        reset_on_start = os.getenv(
+            "RESET_DB_ON_START", "false").lower() == "true"
 
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
@@ -399,7 +389,7 @@ def create_app(
     # in static/style.css. Jinja escapes every {{ value }} automatically.
     app.add_template_filter(local_time, "local_time")
     app.add_template_filter(lambda cents: f"${cents / 100:.2f}", "money")
-    app.add_template_filter(lambda share: f"{share * 100:.1f}%", "percent")
+    app.jinja_env.globals["reporting_url"] = REPORTING_URL
 
     @app.context_processor
     def inject_current_user():
@@ -412,7 +402,8 @@ def create_app(
             cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
             user = cur.fetchone()
         if user is None:
-            session.pop("user_id", None)  # stale session, e.g. after a DB reset
+            # stale session, e.g. after a DB reset
+            session.pop("user_id", None)
             return {"current_user_email": None}
         return {"current_user_email": user["email"]}
 
@@ -482,7 +473,8 @@ def create_app(
     def register():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = register_user(body.get("email"), body.get("password"))
+            payload, status = register_user(
+                body.get("email"), body.get("password"))
             return jsonify(payload), status
 
         payload, status = register_user(
@@ -491,7 +483,7 @@ def create_app(
         if status >= 400:
             return redirect(url_for("register_form", error=payload["error"]))
         return redirect(url_for("login_form", message="Registered! Please log in."))
-    
+
     def login_user(email, password):
         """Shared by the JSON API and the HTML login form.
         Returns (payload, status) - {"id": ..., "email": ...}, or an error.
@@ -521,12 +513,13 @@ def create_app(
             error=request.args.get("error"),
             message=request.args.get("message"),
         )
-    
+
     @app.post("/login")
     def login():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = login_user(body.get("email"), body.get("password"))
+            payload, status = login_user(
+                body.get("email"), body.get("password"))
             return jsonify(payload), status
 
         payload, status = login_user(
@@ -551,7 +544,7 @@ def create_app(
                 cur.execute("SELECT 1")
         except psycopg.Error:
             return jsonify(status="error", error="database unreachable"), 503
-        
+
         return jsonify(
             status="ok",
             revision=os.getenv("APP_REVISION", "local"),
@@ -707,75 +700,14 @@ def create_app(
         """Shared by the JSON API and the HTML booking form.
         Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, capacity, price_cents FROM spaces WHERE id = %s",
-                (space_id,),
-            )
-            space = cur.fetchone()
-            if space is None:
-                return {"error": "space not found"}, 404
-
-            if end_time <= start_time:
-                return {"error": "end_time must be after start_time"}, 400
-            # bool is a subclass of int in Python, so rule out true/false
-            if (
-                not isinstance(party_size, int)
-                or isinstance(party_size, bool)
-                or party_size < 1
-            ):
-                return {
-                    "error": "party_size must be a whole number of at least 1"
-                }, 400
-            if party_size > space["capacity"]:
-                return {
-                    "error": f"party_size {party_size} exceeds this space's "
-                    f"capacity of {space['capacity']}"
-                }, 400
-
-            # Overlap = starts before the other ends AND ends after the
-            # other starts. Back-to-back bookings (10-11, 11-12) are allowed.
-            cur.execute(
-                "SELECT id FROM bookings "
-                "WHERE space_id = %s AND start_time < %s AND end_time > %s",
-                (space_id, end_time, start_time),
-            )
-            if cur.fetchone() is not None:
-                return {"error": "space is already booked for that time"}, 409
-
-            # Unpaid until POST /bookings/<id>/pay is called - unless the
-            # member subscribes: then it is paid at once and costs nothing extra.
-            subscribed = is_subscribed(cur, member)
             # Linked to the account if one is logged in; NULL for a guest.
-            user_id = session.get("user_id")
-            try:
-                cur.execute(
-                    "INSERT INTO bookings "
-                    "(space_id, member, paid, start_time, end_time, "
-                    "amount_cents, user_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                    "RETURNING id, space_id, member, paid, start_time, end_time, "
-                    "amount_cents, user_id, card_last4, created_at",
-                    (
-                        space_id,
-                        member,
-                        subscribed,
-                        start_time,
-                        end_time,
-                        0
-                        if subscribed
-                        else amount_for(
-                            space["price_cents"], start_time, end_time
-                        ),
-                        user_id,
-                    ),
-                )
-            except (DeadlockDetected, ExclusionViolation):
-                # The pre-check above already caught this in the common
-                # case; this only fires when two requests raced past it.
-                return {"error": "space is already booked for that time"}, 409
-            row = cur.fetchone()
-
-        return booking_to_json(row), 201
+            payload, status = purchase_booking(
+                cur, space_id, member, start_time, end_time, party_size,
+                session.get("user_id"),
+            )
+        if status == 201:
+            payload = booking_to_json(payload)
+        return payload, status
 
     @app.post("/spaces/<int:space_id>/bookings")
     def create_booking(space_id):
@@ -791,7 +723,7 @@ def create_app(
 
         payload, status = book_space(
             space_id,
-            body.get("member", "guest"),
+            body.get("member") or "guest",
             start_time,
             end_time,
             body.get("party_size", 1),
@@ -973,22 +905,6 @@ def create_app(
 
         return booking_to_json(row), 200
 
-    def issue_access_code(booking_id):
-        """Shared by the JSON API and the Unlock button.
-        Returns (payload, status)."""
-        with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, paid FROM bookings WHERE id = %s", (booking_id,)
-            )
-            booking = cur.fetchone()
-
-        if booking is None:
-            return {"error": "booking not found"}, 404
-        if not booking["paid"]:
-            return {"error": "booking is not paid"}, 402
-
-        access_code = secrets.token_hex(4)  # mocked lock integration
-        return {"booking_id": booking_id, "access_code": access_code}, 200
 
     @app.post("/bookings/<int:booking_id>/pay")
     def pay_booking(booking_id):
@@ -1009,26 +925,9 @@ def create_app(
 
     @app.post("/members/<name>/subscribe")
     def subscribe_member(name):
-        # Mocked, like payment: no provider, always succeeds. Subscribing
-        # again is a no-op, so a retried request can't break anything.
-        member = member_key(name)
-        if not member:
-            return jsonify(error="member name must not be blank"), 400
-
         with app.db.cursor() as cur:
-            cur.execute(
-                "INSERT INTO subscriptions (member) VALUES (%s) "
-                "ON CONFLICT (member) DO UPDATE SET active = TRUE "
-                "RETURNING member, active, started_at",
-                (member,),
-            )
-            row = cur.fetchone()
-
-        return jsonify(
-            member=row["member"],
-            active=row["active"],
-            started_at=row["started_at"].astimezone(timezone.utc).isoformat(),
-        )
+            payload, status = subscribe(cur, name)
+        return jsonify(payload), status
 
     @app.get("/metrics")
     def metrics():
@@ -1039,21 +938,11 @@ def create_app(
 
     @app.get("/dashboard")
     def dashboard():
-        with app.db.cursor() as cur:
-            data = compute_metrics(cur)
+        # A temporary redirect, so bookmarks follow the dashboard and rolling back
+        # this change is not undone by a browser's cached permanent redirect.
+        return redirect(REPORTING_URL, code=302)
 
-        # Bar length is relative to the top-earning space (that one is 100%).
-        top = max((row["revenue_cents"] for row in data["revenue_by_space"]), default=0)
-        bars = [
-            {
-                "name": row["name"],
-                "revenue_cents": row["revenue_cents"],
-                "width": round(row["revenue_cents"] / top * 100) if top else 0,
-            }
-            for row in data["revenue_by_space"]
-        ]
-
-        return render_template("dashboard.html", metrics=data, bars=bars)
-    
     return app
+
+
 app = create_app()

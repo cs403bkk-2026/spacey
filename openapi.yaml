@@ -6,10 +6,11 @@ info:
     and get access through a mocked lock.
 
 
-    This document covers the JSON API only. A few routes render HTML pages
-    for a browser instead (the space list at `/`, the booking form's target
-    `POST /spaces/{spaceId}/book`, the booking confirmation page and its
-    Pay/Unlock buttons, and `/dashboard`) and are not listed here.
+    This document covers the JSON API only. A few browser routes are not
+    listed here: the HTML pages (the space list at `/`, the booking form's
+    target `POST /spaces/{spaceId}/book`, the booking confirmation page and its
+    Pay/Unlock buttons) and `/dashboard`, which redirects to the external
+    Grafana business metrics report.
   version: "1.0"
 servers:
   - url: /
@@ -532,7 +533,10 @@ paths:
     get:
       tags: [operations]
       summary: Business metrics, as JSON.
-      description: The same numbers shown on `/dashboard`, for machine consumption.
+      description: >-
+        The application's own business totals, for machine consumption. The
+        external Grafana business metrics report is reconciled against these
+        values; the application itself no longer renders them as a page.
       responses:
         "200":
           description: Current totals.

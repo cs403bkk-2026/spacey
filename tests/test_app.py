@@ -371,12 +371,12 @@ def test_list_spaces_returns_the_seed_space():
     assert response.get_json() == {
         "spaces": [
             {
-                "id": 1, 
+                "id": 1,
                 "name": "Founders Desk",
                 "capacity": 1,
                 "price_cents": 2500,
                 "available": True
-             }
+            }
         ]
     }
 
@@ -934,6 +934,37 @@ def test_unlock_a_paid_booking_returns_an_access_code():
     body = response.get_json()
     assert body["booking_id"] == created["id"]
     assert len(body["access_code"]) > 0
+
+def test_unlocking_twice_returns_the_same_stored_code():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/bookings/1/pay", json=VALID_CARD)
+
+    first = client.post("/bookings/1/unlock").get_json()["access_code"]
+    second = client.post("/bookings/1/unlock").get_json()["access_code"]
+
+    assert first == second
+
+def test_the_access_code_survives_a_restart():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/bookings/1/pay", json=VALID_CARD)
+    code = client.post("/bookings/1/unlock").get_json()["access_code"]
+
+    # a second app instance, same database - as after a redeploy
+    restarted = create_app(reset_on_start=False).test_client()
+
+    assert restarted.post("/bookings/1/unlock").get_json()["access_code"] == code
+
+def test_cancelling_a_booking_removes_its_access_code():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/bookings/1/pay", json=VALID_CARD)
+    client.post("/bookings/1/unlock")
+
+    # the access row references the booking, so the delete has to cascade
+    assert client.delete("/bookings/1").status_code == 200
+    assert client.post("/bookings/1/unlock").status_code == 404
 
 def test_unlock_unknown_booking_returns_404():
     client = make_client()
@@ -1614,105 +1645,6 @@ def test_startup_fails_fast_with_a_clear_message_for_a_bad_database_url():
     assert bad_url in message
     assert "docker compose up db -d" in message
 
-def test_dashboard_shows_current_metrics():
-    client = make_client()
-
-    client.post(
-        "/spaces",
-        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
-    )
-    booking = client.post(
-        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
-    ).get_json()
-    client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)  # revenue only counts paid
-
-    response = client.get("/dashboard")
-
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    assert "Spaces: 2" in body
-    assert "Bookings: 1" in body
-    assert "Members: 1" in body
-    assert "$15.00" in body
-
-def test_dashboard_shows_paid_and_unpaid_bookings_separately():
-    client = make_client()
-    first = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    second = client.post(
-        "/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)}
-    ).get_json()
-    client.post("/spaces/1/bookings", json={"member": "flurina", **slot(5, 6)})
-    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
-    client.post(f"/bookings/{second['id']}/pay", json=VALID_CARD)
-
-    body = client.get("/dashboard").get_data(as_text=True)
-
-    # two paid and one unpaid, so swapped labels would be caught
-    assert "Bookings: 3" in body
-    assert "Paid bookings: 2" in body
-    assert "Unpaid bookings: 1" in body
-
-def test_dashboard_with_no_bookings_shows_zero_paid_and_unpaid():
-    client = make_client()
-
-    body = client.get("/dashboard").get_data(as_text=True)
-
-    assert "Paid bookings: 0" in body
-    assert "Unpaid bookings: 0" in body
-
-def test_dashboard_describes_the_product_and_notes_the_data_source():
-    client = make_client()
-
-    body = client.get("/dashboard").get_data(as_text=True)
-
-    assert "space booking system" in body
-    assert "test and load-test data" in body
-
-def test_dashboard_shows_the_new_investor_metrics():
-    client = make_client()
-    client.post(
-        "/spaces", json={"name": "Room B", "capacity": 4, "price_cents": 1000}
-    )
-    first = client.post(
-        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(3, 4)})
-    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
-
-    body = client.get("/dashboard").get_data(as_text=True)
-
-    assert "Utilization" in body
-    assert "Repeat member rate" in body
-    assert "Payment conversion: 50.0%" in body
-    assert "Avg revenue per paid booking: $10.00" in body
-
-def test_dashboard_shows_a_revenue_bar_for_each_space():
-    client = make_client()
-    client.post(
-        "/spaces", json={"name": "Room B", "capacity": 4, "price_cents": 1000}
-    )
-    paid = client.post(
-        "/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    client.post(f"/bookings/{paid['id']}/pay", json=VALID_CARD)
-
-    body = client.get("/dashboard").get_data(as_text=True)
-
-    assert "Founders Desk" in body
-    assert "Room B" in body
-    assert "$10.00" in body
-
-def test_dashboard_with_no_spaces_shows_no_bar_chart_crash():
-    client = make_client()
-    client.delete("/spaces/1")
-
-    response = client.get("/dashboard")
-
-    assert response.status_code == 200
-    assert "No spaces yet." in response.get_data(as_text=True)
-
 def test_delete_unbooked_space_removes_it():
     client = make_client()
     created = client.post(
@@ -2060,20 +1992,27 @@ def test_update_space_with_invalid_values_is_rejected():
     assert space["price_cents"] == 2500
 
 
-def test_homepage_links_to_dashboard():
-    client = make_client()
-
-    response = client.get("/")
-
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    assert 'href="/dashboard"' in body
-
-def test_dashboard_links_back_to_homepage():
+def test_dashboard_redirects_to_the_grafana_report():
     client = make_client()
 
     response = client.get("/dashboard")
 
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    assert 'href="/"' in body
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://grafana.cs403bkk26.space/d/spacey-reporting"
+
+
+def test_nav_links_to_the_grafana_report():
+    client = make_client()
+
+    body = client.get("/").get_data(as_text=True)
+
+    assert 'href="https://grafana.cs403bkk26.space/d/spacey-reporting"' in body
+    assert 'href="/dashboard"' not in body
+
+
+def test_reporting_url_can_be_configured(monkeypatch):
+    monkeypatch.setattr("app.REPORTING_URL", "https://example.test/report")
+    client = make_client()
+
+    assert client.get("/dashboard").headers["Location"] == "https://example.test/report"
+    assert 'href="https://example.test/report"' in client.get("/").get_data(as_text=True)
