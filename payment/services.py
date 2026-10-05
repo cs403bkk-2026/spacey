@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timezone
 
-from purchase import expire_unpaid_bookings
+from purchase import UNPAID_HOLD_DURATION, expire_unpaid_bookings
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
@@ -70,10 +70,10 @@ def mark_booking_paid(app, booking_id, card_number, expiry, cvc, force_failure=F
 
         cur.execute(
             "UPDATE bookings SET paid = TRUE, card_last4 = %s WHERE id = %s "
-            "AND (paid OR created_at > statement_timestamp() - INTERVAL '15 minutes') "
+            "AND (paid OR created_at > statement_timestamp() - %s) "
             "RETURNING id, space_id, member, paid, start_time, end_time, "
             "amount_cents, user_id, card_last4, created_at",
-            (card_number[-4:], booking_id),
+            (card_number[-4:], booking_id, UNPAID_HOLD_DURATION),
         )
         row = cur.fetchone()
         if row is None:
