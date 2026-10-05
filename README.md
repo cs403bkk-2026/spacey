@@ -69,6 +69,10 @@ instead of a raw stack trace.
 
 Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Architecture decisions
+
+- [ADR 0001: Move reporting to Grafana](docs/adr/0001-move-reporting-to-grafana.md)
+
 ## API reference
 
 Every JSON endpoint is documented in detail in [openapi.yaml](openapi.yaml) (OpenAPI 3.0) - request
