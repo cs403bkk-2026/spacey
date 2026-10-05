@@ -283,6 +283,27 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BookingList" }
 
+  /me/bookings:
+    get:
+      tags: [bookings]
+      summary: List the logged-in account's bookings.
+      description: >
+        Bookings made while logged in to this session's account, filtered
+        on the server. Needs the session cookie set by `POST /login`. Guest
+        bookings (`user_id` null) are never included.
+      responses:
+        "200":
+          description: That account's bookings, earliest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookingList" }
+        "401":
+          description: Not logged in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "log in to see your bookings" }
+
   /bookings/{bookingId}:
     parameters:
       - $ref: "#/components/parameters/BookingId"
