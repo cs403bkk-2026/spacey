@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import psycopg
 from flask import Flask, jsonify, redirect, request, session
 from psycopg.rows import dict_row
-from werkzeug.security import check_password_hash
 
 from access import issue_access_code
 # Called qualified, since route functions below reuse names like get_space.
@@ -354,33 +353,17 @@ def create_app(
             )
         return jsonify(payload), status
 
-
-    def login_user(email, password):
-        """Returns (payload, status) - {"id": ..., "email": ...}, or an error.
-        Wrong password and unknown email give the identical error, so a
-        failed attempt can't be used to find out which emails are registered."""
-        invalid = {"error": "invalid email or password"}, 401
-        if not isinstance(email, str) or not isinstance(password, str):
-            return invalid
-
-        with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, email, password_hash FROM users WHERE email = %s",
-                (email.strip().lower(),),
-            )
-            user = cur.fetchone()
-
-        if user is None or not check_password_hash(user["password_hash"], password):
-            return invalid
-
-        session["user_id"] = user["id"]
-        return {"id": user["id"], "email": user["email"]}, 200
-
     @app.post("/login")
     def login():
         body = request.get_json(silent=True) or {}
-        payload, status = login_user(body.get("email"), body.get("password"))
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.authenticate(
+                cur, body.get("email"), body.get("password")
+            )
+        if status == 200:
+            session["user_id"] = payload["id"]
         return jsonify(payload), status
+
 
     @app.post("/logout")
     def logout():
