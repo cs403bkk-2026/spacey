@@ -785,6 +785,131 @@ def test_paying_with_an_expired_card_is_rejected():
     assert response.get_json() == {"error": "card has expired"}
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
+# PT-005: boundary cases for card validation. Card numbers below pass the Luhn
+# check where they are meant to be accepted, so only the rule under test decides.
+
+def pay_with(client, booking_id, **overrides):
+    return client.post(f"/bookings/{booking_id}/pay", json={**VALID_CARD, **overrides})
+
+def new_unpaid_booking(client, n):
+    """A separate one-hour slot per call, so cases don't clash or share state."""
+    return client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(n * 2, n * 2 + 1)}
+    ).get_json()["id"]
+
+def expiry_months_from_now(months):
+    """MM/YY for the given number of months from the current UTC month."""
+    now = datetime.now(timezone.utc)
+    index = now.year * 12 + (now.month - 1) + months
+    return f"{index % 12 + 1:02d}/{(index // 12) % 100:02d}"
+
+@pytest.mark.parametrize(
+    "card_number, accepted",
+    [
+        ("424242424242", False),             # 12 digits, one too short
+        ("4222222222222", True),             # 13 digits, shortest allowed
+        ("6011000000000000001", True),       # 19 digits, longest allowed
+        ("42424242424242424242", False),     # 20 digits, one too long
+        ("4242 4242 4242 4242", False),      # spaces are not accepted
+        ("4242-4242-4242-4242", False),      # dashes are not accepted
+        ("", False),
+        (4242424242424242, False),           # a number, not a string
+        (None, False),
+        (["4242424242424242"], False),
+    ],
+)
+def test_card_number_length_and_type_boundaries(card_number, accepted):
+    client = make_client()
+    booking_id = new_unpaid_booking(client, 1)
+
+    response = pay_with(client, booking_id, card_number=card_number)
+
+    if accepted:
+        assert response.status_code == 200
+        assert response.get_json()["paid"] is True
+    else:
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "card_number must be 13-19 digits"}
+        assert client.get(f"/bookings/{booking_id}").get_json()["paid"] is False
+
+@pytest.mark.parametrize(
+    "cvc, accepted",
+    [
+        ("12", False),      # 2 digits, too short
+        ("123", True),      # 3 digits
+        ("1234", True),     # 4 digits
+        ("12345", False),   # 5 digits, too long
+        ("", False),
+        (" 123", False),    # whitespace
+        (123, False),       # a number, not a string
+        (None, False),
+    ],
+)
+def test_cvc_length_and_type_boundaries(cvc, accepted):
+    client = make_client()
+    booking_id = new_unpaid_booking(client, 1)
+
+    response = pay_with(client, booking_id, cvc=cvc)
+
+    if accepted:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "cvc must be 3 or 4 digits"}
+        assert client.get(f"/bookings/{booking_id}").get_json()["paid"] is False
+
+@pytest.mark.parametrize(
+    "months_from_now, accepted",
+    [
+        (-1, False),   # last month: expired
+        (0, True),     # this month: still valid
+        (1, True),     # next month
+    ],
+)
+def test_expiry_month_boundary(months_from_now, accepted):
+    client = make_client()
+    booking_id = new_unpaid_booking(client, 1)
+
+    response = pay_with(client, booking_id, expiry=expiry_months_from_now(months_from_now))
+
+    if accepted:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "card has expired"}
+        assert client.get(f"/bookings/{booking_id}").get_json()["paid"] is False
+
+@pytest.mark.parametrize(
+    "expiry",
+    ["00/30", "13/30", "1/30", "12/2030", "12-30", "1230", "12/3", "", " 12/30", 1230, None],
+)
+def test_malformed_expiry_is_rejected_as_a_format_error(expiry):
+    client = make_client()
+    booking_id = new_unpaid_booking(client, 1)
+
+    response = pay_with(client, booking_id, expiry=expiry)
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "expiry must be in MM/YY format"}
+    assert client.get(f"/bookings/{booking_id}").get_json()["paid"] is False
+
+def test_the_first_failing_card_field_decides_the_error():
+    client = make_client()
+    booking_id = new_unpaid_booking(client, 1)
+
+    # Everything is wrong at once: the card number is reported first, then cvc, then expiry.
+    all_bad = {"card_number": "42", "cvc": "1", "expiry": "99/99"}
+    assert pay_with(client, booking_id, **all_bad).get_json() == {
+        "error": "card_number must be 13-19 digits"
+    }
+    assert pay_with(client, booking_id, **{**all_bad, "card_number": "4242424242424242"}).get_json() == {
+        "error": "cvc must be 3 or 4 digits"
+    }
+    assert pay_with(client, booking_id, **{**all_bad, "card_number": "4242424242424242", "cvc": "123"}).get_json() == {
+        "error": "expiry must be in MM/YY format"
+    }
+    assert client.get(f"/bookings/{booking_id}").get_json()["paid"] is False
+
 def test_confirmation_page_pay_form_has_card_fields_and_shows_last4_once_paid():
     client = make_client()
     client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
