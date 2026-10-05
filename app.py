@@ -238,7 +238,6 @@ def booking_to_json(row: dict) -> dict:
     }
 
 
-
 def compute_metrics(cur) -> dict:
     cur.execute("SELECT COUNT(*) AS count FROM spaces")
     total_spaces = cur.fetchone()["count"]
@@ -565,7 +564,7 @@ def create_app(
 
         payload, status = book_space(
             space_id,
-            body.get("member") or "guest",
+            body.get("member"),
             start_time,
             end_time,
             body.get("party_size", 1),

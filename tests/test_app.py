@@ -884,6 +884,27 @@ def test_user_id_stays_on_the_booking_through_pay_and_list():
         == user["id"]
     )
 
+def test_booking_member_is_trimmed_and_blank_means_guest():
+    client = make_client()
+
+    trimmed = client.post(
+        "/spaces/1/bookings", json={"member": "  member b ", **slot(1, 2)}
+    ).get_json()
+    blank = client.post(
+        "/spaces/1/bookings", json={"member": "   ", **slot(3, 4)}
+    ).get_json()
+
+    assert trimmed["member"] == "member b"
+    assert blank["member"] == "guest"
+
+def test_booking_member_must_be_a_string():
+    client = make_client()
+
+    response = client.post("/spaces/1/bookings", json={"member": 5, **slot(1, 2)})
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "member must be a string"}
+
 def test_subscribing_returns_an_active_subscription():
     client = make_client()
 
