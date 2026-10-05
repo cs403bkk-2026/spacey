@@ -54,6 +54,7 @@ development-only default - but a real deployment should set all of them explicit
 | `APP_REVISION`       | Shown by `GET /health`, so a deployment can confirm which commit is live.     | `local`                                              |
 | `RESET_DB_ON_START`  | If `true`, wipes all tables on startup. Used by tests; never set this in a real deployment or you will delete real data. | `false` |
 | `SECRET_KEY`         | Signs the login session cookie. **Must** be set to a real secret in any deployment - the default is public (it's printed right here in this file), so anyone could forge a session cookie claiming to be any user. The app would still run fine without it set, which is exactly what makes this easy to forget. | `dev-secret-key-not-for-production` |
+| `REPORTING_URL`      | Where the "Business metrics" link and `/dashboard` send people (the Grafana report). | `https://grafana.cs403bkk26.space/d/spacey-reporting` |
 
 A missing or unreachable `DATABASE_URL` now fails fast at startup with a short, readable message
 instead of a raw stack trace.
@@ -90,7 +91,7 @@ A few routes render an HTML page for a browser instead of JSON, and aren't part 
 | GET    | `/bookings/<id>/confirmation`       | Booking details, price, and Pay / Unlock buttons                     |
 | POST   | `/bookings/<id>/confirmation/pay`   | Target of the confirmation page's Pay button                         |
 | POST   | `/bookings/<id>/confirmation/unlock`| Target of the confirmation page's Unlock button                      |
-| GET    | `/dashboard`                        | Business metrics as a page                                           |
+| GET    | `/dashboard`                        | Redirects to the Grafana business metrics report                     |
 
 Quick summary of the JSON API (see [openapi.yaml](openapi.yaml) for the full detail):
 
