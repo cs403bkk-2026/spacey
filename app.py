@@ -20,6 +20,12 @@ DATABASE_URL = os.getenv(
 # everyone out and, worse, an unset default would be a known, public key.
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-not-for-production")
 
+# Business metrics now live in Grafana (#207). /dashboard redirects there and the
+# nav links to it; /metrics (JSON) stays part of the API.
+REPORTING_URL = os.getenv(
+    "REPORTING_URL", "https://grafana.cs403bkk26.space/d/spacey-reporting"
+)
+
 
 def get_connection(database_url: str) -> psycopg.Connection:
     try:
@@ -383,7 +389,7 @@ def create_app(
     # in static/style.css. Jinja escapes every {{ value }} automatically.
     app.add_template_filter(local_time, "local_time")
     app.add_template_filter(lambda cents: f"${cents / 100:.2f}", "money")
-    app.add_template_filter(lambda share: f"{share * 100:.1f}%", "percent")
+    app.jinja_env.globals["reporting_url"] = REPORTING_URL
 
     @app.context_processor
     def inject_current_user():
@@ -932,22 +938,9 @@ def create_app(
 
     @app.get("/dashboard")
     def dashboard():
-        with app.db.cursor() as cur:
-            data = compute_metrics(cur)
-
-        # Bar length is relative to the top-earning space (that one is 100%).
-        top = max((row["revenue_cents"]
-                for row in data["revenue_by_space"]), default=0)
-        bars = [
-            {
-                "name": row["name"],
-                "revenue_cents": row["revenue_cents"],
-                "width": round(row["revenue_cents"] / top * 100) if top else 0,
-            }
-            for row in data["revenue_by_space"]
-        ]
-
-        return render_template("dashboard.html", metrics=data, bars=bars)
+        # A temporary redirect, so bookmarks follow the dashboard and rolling back
+        # this change is not undone by a browser's cached permanent redirect.
+        return redirect(REPORTING_URL, code=302)
 
     return app
 
