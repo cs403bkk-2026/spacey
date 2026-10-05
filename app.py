@@ -745,6 +745,9 @@ def create_app(
     def booking_confirmation(booking_id):
         """What a member sees after booking: the details, a Pay button and,
         once paid, an Unlock button that shows the access code."""
+        return render_confirmation(booking_id, error=request.args.get("error"))
+
+    def render_confirmation(booking_id, code=None, error=None):
         with app.db.cursor() as cur:
             cur.execute(
                 "SELECT b.id, b.member, b.paid, b.start_time, b.end_time, "
@@ -761,8 +764,8 @@ def create_app(
         return render_template(
             "confirmation.html",
             booking=booking,
-            code=request.args.get("code"),
-            error=request.args.get("error"),
+            code=code,
+            error=error,
         )
 
     @app.post("/bookings/<int:booking_id>/confirmation/pay")
@@ -792,13 +795,9 @@ def create_app(
                     error=payload["error"],
                 )
             )
-        return redirect(
-            url_for(
-                "booking_confirmation",
-                booking_id=booking_id,
-                code=payload["access_code"],
-            )
-        )
+        # Rendered straight from the POST, not redirected: a ?code= in the
+        # URL would end up in browser history, Referer headers and screenshots.
+        return render_confirmation(booking_id, code=payload["access_code"])
 
     @app.get("/bookings/mine")
     def my_bookings():

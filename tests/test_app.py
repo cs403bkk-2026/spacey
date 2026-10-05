@@ -152,11 +152,25 @@ def test_book_pay_unlock_all_the_way_through_the_browser():
     assert ">Unlock</button>" in page
 
     unlocked = client.post("/bookings/1/confirmation/unlock")
-    page = client.get(unlocked.headers["Location"]).get_data(as_text=True)
+    assert unlocked.status_code == 200  # rendered directly, no redirect
+    page = unlocked.get_data(as_text=True)
 
     assert "Your access code:" in page
     code = page.split("<strong>")[1].split("</strong>")[0]
     assert len(code) == 8  # secrets.token_hex(4)
+
+def test_access_code_never_travels_in_the_url():
+    client = make_client()
+    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(-1, 1)})
+    client.post("/bookings/1/confirmation/pay", data=VALID_CARD)
+
+    unlocked = client.post("/bookings/1/confirmation/unlock")
+    assert "Location" not in unlocked.headers
+    code = client.post("/bookings/1/unlock").get_json()["access_code"]
+
+    # an old-style ?code= link no longer puts anything on the page
+    page = client.get(f"/bookings/1/confirmation?code={code}").get_data(as_text=True)
+    assert "Your access code" not in page
 
 def test_confirmation_page_unlock_without_paying_shows_the_error():
     client = make_client()
