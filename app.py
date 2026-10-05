@@ -5,15 +5,15 @@ from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, redirect, request, session
-from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import check_password_hash
 
 from access import issue_access_code
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
+import purchase.member
 import purchase.space
-from purchase.member import is_valid_email, is_valid_password, subscribe
+from purchase.member import subscribe
 from purchase.space import booked_space_ids, is_valid_capacity, is_valid_name, is_valid_price
 
 DATABASE_URL = os.getenv(
@@ -345,34 +345,15 @@ def create_app(
         # is the JSON API.
         return redirect("/app/", code=302)
 
-    def register_user(email, password):
-        """Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
-        if not is_valid_email(email):
-            return {"error": "enter a valid email address"}, 400
-        if not is_valid_password(password):
-            return {"error": "password must be at least 8 characters"}, 400
-
-        email = email.strip().lower()
-        password_hash = generate_password_hash(password)
-
-        with app.db.cursor() as cur:
-            try:
-                cur.execute(
-                    "INSERT INTO users (email, password_hash) VALUES (%s, %s) "
-                    "RETURNING id, email",
-                    (email, password_hash),
-                )
-            except UniqueViolation:
-                return {"error": "email is already registered"}, 409
-            user = cur.fetchone()
-
-        return user, 201
-
     @app.post("/register")
     def register():
         body = request.get_json(silent=True) or {}
-        payload, status = register_user(body.get("email"), body.get("password"))
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.register_user(
+                cur, body.get("email"), body.get("password")
+            )
         return jsonify(payload), status
+
 
     def login_user(email, password):
         """Returns (payload, status) - {"id": ..., "email": ...}, or an error.
