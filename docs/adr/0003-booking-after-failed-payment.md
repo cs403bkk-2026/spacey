@@ -72,5 +72,4 @@ concurrent retries; PT-014 migrates booking writes out of Payment. Purchase owns
 the hold implementation. Refund on cancellation belongs to PT-013 and does not
 change the failed-payment decision here.
 
-Source: [SDLC Ticket Tracker, Sprint-1](https://docs.google.com/spreadsheets/d/1DAQPfFUgdsQBVuD7cuqFDiHtSwy2hnqWxvvAOs74ZAs/edit#gid=0)
-and the supplied agreed contract. PT-003 owner: Drake.
+Source: the supplied agreed contract. PT-003 owner: Drake.
