@@ -230,8 +230,9 @@ paths:
                   type: string
                   default: guest
                   description: >
-                    Defaults to `guest` if omitted - there is no
-                    requirement yet that a real name is given (issue #22).
+                    Stored trimmed of surrounding spaces. Defaults to
+                    `guest` if omitted or blank - there is no requirement
+                    yet that a real name is given (issue #22).
                   example: annabel
                 start_time:
                   type: string
@@ -258,8 +259,9 @@ paths:
           description: >
             `start_time and end_time are required (ISO 8601 with
             timezone)`, `end_time must be after start_time`, `party_size
-            must be a whole number of at least 1`, or `party_size {n}
-            exceeds this space's capacity of {capacity}`.
+            must be a whole number of at least 1`, `party_size {n}
+            exceeds this space's capacity of {capacity}`, or `member must
+            be a string`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

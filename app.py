@@ -654,7 +654,7 @@ def create_app(
 
         payload, status = book_space(
             space_id,
-            body.get("member") or "guest",
+            body.get("member"),
             start_time,
             end_time,
             body.get("party_size", 1),
@@ -665,7 +665,7 @@ def create_app(
     def book_from_form(space_id):
         """The homepage form posts here, then we send the browser back to
         the space list - with a message, since a form can't read JSON."""
-        member = request.form.get("member", "").strip() or "guest"
+        member = request.form.get("member")
         start_time = parse_form_time(request.form.get("start_time"))
         end_time = parse_form_time(request.form.get("end_time"))
 
