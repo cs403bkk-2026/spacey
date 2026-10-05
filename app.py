@@ -14,7 +14,7 @@ from access import issue_access_code
 import purchase.booking
 import purchase.space
 from purchase.booking import LOCAL_TZ, parse_form_time
-from purchase.member import subscribe
+from purchase.member import is_valid_email, is_valid_password, subscribe
 from purchase.space import booked_space_ids, is_valid_capacity, is_valid_name, is_valid_price
 
 DATABASE_URL = os.getenv(
@@ -165,18 +165,6 @@ def get_connection(database_url: str) -> psycopg.Connection:
             """
         )
     return conn
-
-
-# Deliberately simple: good enough to catch a typo, not full RFC 5322.
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def is_valid_email(email) -> bool:
-    return isinstance(email, str) and EMAIL_RE.match(email.strip()) is not None
-
-
-def is_valid_password(password) -> bool:
-    return isinstance(password, str) and len(password) >= 8
 
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
