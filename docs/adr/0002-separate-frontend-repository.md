@@ -32,13 +32,55 @@ browser origin. The frontend delivery PR is merged; the owner reports the
 frontend working at `/app/` as of 5 October. That report does not establish
 completion of the backend cleanup or the release checks below.
 
-## Alternatives and consequences
+## Alternatives
 
 Keeping the UI in the monolith with clearer modules, or using a monorepo with
 separate deployment units, would retain simpler local setup and atomic changes.
 Separate repositories favour distinct delivery ownership but add contract checks,
 release tooling and coordination for changes affecting both sides. Delivery
 autonomy is an expected benefit to verify, not a consequence of moving files alone.
+
+## Consequences
+
+- Removing obsolete form handlers and server-rendered UI reduces presentation
+  paths in the main application. The remaining backend still owns business
+  rules, authorisation and authoritative data.
+- Compatible UI changes can have a separate release cycle, but changes to API
+  meaning, authentication or response shape require consumer/provider
+  coordination. OpenAPI describes the promise; implementation checks must
+  establish that both sides honour it.
+- Separate builds, deployments and routing add operational work. Record which
+  frontend/backend versions work together and how failures are diagnosed.
+- Removing the server-rendered UI also removes that fallback. Recovery must
+  retain a compatible frontend/API pair or deliberately restore the prior
+  application UI; reverting either side alone may not restore the journey.
+- A smaller controller layer makes domain-module extraction easier to reason
+  about, but does not itself establish independent backend services or resolve
+  data ownership.
+
+## Work to be done
+
+The frontend delivery PR is merged. The following cleanup and verification
+items remain open in this record until supported by implementation evidence:
+
+- [ ] Inventory the remaining HTML routes, templates, assets and form helpers,
+  including `book_from_form`; check retained callers before deleting them.
+- [ ] Remove obsolete server-rendered UI and duplicate form paths, preserving
+  the JSON API and authentication behaviour used by the extracted frontend.
+- [ ] Keep request/response adaptation in `app.py`; move business operations
+  and persistence towards their corresponding domain modules without requiring
+  a framework rewrite or immediate service split.
+- [ ] Align OpenAPI and tests with retained behaviour and intentional removals;
+  check success, validation errors and relevant authentication/failure cases.
+- [ ] Verify booking, payment and access through `/app/` after cleanup, recording
+  frontend/backend revisions and the environment.
+- [ ] Demonstrate a compatible frontend-only release and recovery, including
+  the recovery route after the old UI has been removed.
+- [ ] Record ownership for contract changes, frontend delivery and routing,
+  plus any changes that still require coordinated releases.
+
+Use the existing frontend/backend work items to allocate this work. These
+unchecked items are acceptance work, not evidence that a live check has failed.
 
 ## Migration and checks
 
