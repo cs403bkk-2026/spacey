@@ -63,6 +63,12 @@ member values. Keep these qualifications and the test-data notice visible.
 We expect less reporting UI code to maintain and more development time for the
 member journey. These are expected benefits, not measured outcomes yet.
 
+This removes custom reporting presentation, not all reporting code: retaining
+`/metrics` and `compute_metrics()` preserves compatibility but leaves a
+reconciliation obligation between application calculations and Grafana queries.
+Removing the old HTML report also removes a fallback, so recovery must preserve
+a usable report rather than merely revert a deployment specification.
+
 The replacement introduces a dependency on Grafana availability and login.
 Moving presentation does not remove dependence on the underlying data or
 guarantee isolation from database failures. Reporting queries can still add
@@ -79,6 +85,32 @@ a folder alone does not make the datasource operator-only. This decision does
 not claim that the separate operator-access issue is complete.
 
 ## Migration and verification
+
+### Work to be done
+
+The following checklist tracks remaining delivery and evidence, not completion
+of this ADR. Leave items open until the corresponding result is recorded in
+[#207](https://github.com/cs403bkk-2026/spacey/issues/207) or its linked changes.
+
+- [ ] Platform/reporting implementation: version and release the dashboard,
+  provisioning, aggregate views and narrowly scoped read-only grants.
+- [ ] Reporting validation: reconcile the ten summary metrics and revenue by
+  space, including the boundary/error cases below, at recorded revisions.
+- [ ] Access verification: check the intended user journey, datasource permissions
+  and unauthorised-access denial; record campus-network evidence or its absence.
+- [ ] Application cleanup: after the acceptance checks, review and release #211,
+  redirect reporting navigation and remove the redundant HTML presentation.
+  Retain `/metrics` and `compute_metrics()` until separately assessed.
+- [ ] Release/recovery verification: recheck reporting and the member journey,
+  and exercise the rollback procedure below with a working report preserved.
+- [ ] Handover: identify who maintains metric definitions, reporting-contract
+  checks and Grafana configuration, and record how schema changes reach them.
+
+These are responsibilities to assign through the existing work items, not new
+team appointments. The operator-access and time-series follow-ups remain
+separate; this checklist does not claim they are complete.
+
+### Acceptance and recovery procedure
 
 1. Release the reviewed Grafana configuration and read-only data contract while
    keeping the existing application report available.
