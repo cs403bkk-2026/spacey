@@ -109,6 +109,26 @@ while logged out is a guest booking (`user_id: null`).
 
 The live URL and deployment-log link will be added here before students are invited.
 
+## Unpaid booking holds (PT-003)
+
+Purchase holds an unpaid booking for 15 minutes from its database `created_at`.
+A failed payment leaves the booking unpaid and allows retry at the same stored
+price. Attempts do not restart the clock. Unpaid bookings cannot unlock and
+contribute no revenue; paid bookings are not affected by the hold deadline.
+
+On the next application request (except health and static files), Purchase
+removes unpaid bookings whose deadline has passed, using the same deletion
+behavior as cancellation. Availability and booking checks therefore release
+expired slots before serving the request. Requests to pay, read or unlock a
+removed booking return `404`; members must book again at the current price.
+Payment also checks the deadline when marking a booking paid, so a request
+that crosses the deadline cannot pay the expired booking.
+
+There is no background expiry worker or retained expired-booking history.
+Deploying this policy also expires existing unpaid bookings older than 15 minutes.
+The full Payment → Purchase contract, unknown-outcome reconciliation, and refunds
+belong to separate tickets. Payment is still mocked in this implementation.
+
 ## Start useful work
 
 Do not wait for the kickoff meeting.

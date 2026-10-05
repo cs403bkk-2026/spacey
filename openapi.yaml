@@ -324,7 +324,10 @@ paths:
         (no card required for that retry), so a retried request can't
         charge twice. Pass `force_failure: true` with a still-valid card
         to make this attempt fail on purpose, for testing the failure
-        path - the booking is left unpaid.
+        path - the booking is left unpaid. Unpaid bookings reserve their slot
+        for 15 minutes from created_at; retries do not extend the hold.
+        Expired unpaid bookings are removed before application requests and
+        cannot be paid or unlocked (404). Paid bookings do not expire.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       requestBody:
