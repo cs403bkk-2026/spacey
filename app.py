@@ -13,7 +13,7 @@ import purchase.booking
 import purchase.member
 import purchase.space
 from purchase.member import subscribe
-from purchase.space import booked_space_ids, is_valid_capacity, is_valid_name, is_valid_price
+from purchase.space import booked_space_ids
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -417,34 +417,9 @@ def create_app(
     @app.patch("/spaces/<int:space_id>")
     def update_space(space_id):
         body = request.get_json(silent=True) or {}
-        if not any(field in body for field in ("name", "capacity", "price_cents")):
-            return jsonify(
-                error="provide name, capacity and/or price_cents to update"
-            ), 400
-
         with app.db.cursor() as cur:
-            if purchase.space.get_space(cur, space_id) is None:
-                return jsonify(error="space not found"), 404
-
-            name = body.get("name")
-            capacity = body.get("capacity")
-            price_cents = body.get("price_cents")
-            if "name" in body and not is_valid_name(name):
-                return jsonify(error="name must not be empty"), 400
-            if "capacity" in body and not is_valid_capacity(capacity):
-                return jsonify(
-                    error="capacity must be a whole number of at least 1"
-                ), 400
-            if "price_cents" in body and not is_valid_price(price_cents):
-                return jsonify(
-                    error="price_cents must be a non-negative integer"
-                ), 400
-            if name is not None:
-                name = name.strip()
-
-            space = purchase.space.update_space(cur, space_id, name, capacity, price_cents)
-
-        return jsonify(space)
+            payload, status = purchase.space.update_space(cur, space_id, body)
+        return jsonify(payload), status
 
     @app.delete("/spaces/<int:space_id>")
     def delete_space(space_id):
