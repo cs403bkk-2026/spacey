@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import psycopg
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from psycopg.rows import dict_row
-from werkzeug.security import check_password_hash
 
 from access import issue_access_code
 # Called qualified, since route functions below reuse names like get_space.
@@ -421,28 +420,6 @@ def create_app(
             return redirect(url_for("register_form", error=payload["error"]))
         return redirect(url_for("login_form", message="Registered! Please log in."))
 
-    def login_user(email, password):
-        """Shared by the JSON API and the HTML login form.
-        Returns (payload, status) - {"id": ..., "email": ...}, or an error.
-        Wrong password and unknown email give the identical error, so a
-        failed attempt can't be used to find out which emails are registered."""
-        invalid = {"error": "invalid email or password"}, 401
-        if not isinstance(email, str) or not isinstance(password, str):
-            return invalid
-
-        with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, email, password_hash FROM users WHERE email = %s",
-                (email.strip().lower(),),
-            )
-            user = cur.fetchone()
-
-        if user is None or not check_password_hash(user["password_hash"], password):
-            return invalid
-
-        session["user_id"] = user["id"]
-        return {"id": user["id"], "email": user["email"]}, 200
-
     @app.get("/login")
     def login_form():
         return render_template(
@@ -455,13 +432,17 @@ def create_app(
     def login():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = login_user(
-                body.get("email"), body.get("password"))
+        else:
+            body = request.form
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.authenticate(
+                cur, body.get("email"), body.get("password")
+            )
+        if status == 200:
+            session["user_id"] = payload["id"]
+        if request.is_json:
             return jsonify(payload), status
 
-        payload, status = login_user(
-            request.form.get("email"), request.form.get("password")
-        )
         if status >= 400:
             return redirect(url_for("login_form", error=payload["error"]))
         return redirect(url_for("index"))
