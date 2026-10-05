@@ -1302,6 +1302,34 @@ def test_homepage_links_to_my_bookings_only_when_logged_in():
 
     assert 'href="/bookings/mine"' in client.get("/").get_data(as_text=True)
 
+def test_my_bookings_json_needs_a_login():
+    client = make_client()
+
+    response = client.get("/me/bookings")
+
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "log in to see your bookings"}
+
+def test_my_bookings_json_lists_only_the_logged_in_users_bookings():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "guest", **slot(1, 2)})
+    register(client, email="annabel@example.com")
+    register(client, email="gregory@example.com")
+
+    login(client, email="annabel@example.com")
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(3, 4)})
+    client.post("/logout", json={})
+
+    login(client, email="gregory@example.com")
+    mine = client.post(
+        "/spaces/1/bookings", json={"member": "gregory", **slot(5, 6)}
+    ).get_json()
+
+    response = client.get("/me/bookings")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"bookings": [mine]}
+
 def test_booking_member_is_trimmed_and_blank_means_guest():
     client = make_client()
 

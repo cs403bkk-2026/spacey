@@ -764,6 +764,19 @@ def create_app(
 
         return jsonify(bookings=[booking_to_json(row) for row in rows])
 
+    @app.get("/me/bookings")
+    def list_my_bookings():
+        """The logged-in account's bookings, so the client never has to
+        fetch everyone's and filter them itself."""
+        user_id = session.get("user_id")
+        if user_id is None:
+            return jsonify(error="log in to see your bookings"), 401
+
+        with app.db.cursor() as cur:
+            rows = purchase.booking.list_user_bookings(cur, user_id)
+
+        return jsonify(bookings=[booking_to_json(row) for row in rows])
+
     @app.get("/bookings/<int:booking_id>")
     def find_booking(booking_id):
         with app.db.cursor() as cur:
