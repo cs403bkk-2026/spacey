@@ -5,16 +5,16 @@ from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
-from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import check_password_hash
 
 from access import issue_access_code
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
+import purchase.member
 import purchase.space
 from purchase.booking import LOCAL_TZ, parse_form_time
-from purchase.member import is_valid_email, is_valid_password, subscribe
+from purchase.member import subscribe
 from purchase.space import booked_space_ids, is_valid_capacity, is_valid_name, is_valid_price
 
 DATABASE_URL = os.getenv(
@@ -396,30 +396,6 @@ def create_app(
             error=request.args.get("error"),
         )
 
-    def register_user(email, password):
-        """Shared by the JSON API and the HTML register form.
-        Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
-        if not is_valid_email(email):
-            return {"error": "enter a valid email address"}, 400
-        if not is_valid_password(password):
-            return {"error": "password must be at least 8 characters"}, 400
-
-        email = email.strip().lower()
-        password_hash = generate_password_hash(password)
-
-        with app.db.cursor() as cur:
-            try:
-                cur.execute(
-                    "INSERT INTO users (email, password_hash) VALUES (%s, %s) "
-                    "RETURNING id, email",
-                    (email, password_hash),
-                )
-            except UniqueViolation:
-                return {"error": "email is already registered"}, 409
-            user = cur.fetchone()
-
-        return user, 201
-
     @app.get("/register")
     def register_form():
         return render_template(
@@ -432,13 +408,15 @@ def create_app(
     def register():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-            payload, status = register_user(
-                body.get("email"), body.get("password"))
+        else:
+            body = request.form
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.register_user(
+                cur, body.get("email"), body.get("password")
+            )
+        if request.is_json:
             return jsonify(payload), status
 
-        payload, status = register_user(
-            request.form.get("email"), request.form.get("password")
-        )
         if status >= 400:
             return redirect(url_for("register_form", error=payload["error"]))
         return redirect(url_for("login_form", message="Registered! Please log in."))
