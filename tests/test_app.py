@@ -771,6 +771,37 @@ def test_paying_with_a_badly_formatted_card_is_rejected():
 
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
+def test_paying_with_a_card_that_fails_the_luhn_check_is_rejected():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    # 4242424242424242 is valid; changing the last digit breaks the checksum
+    response = client.post(
+        f"/bookings/{created['id']}/pay",
+        json={**VALID_CARD, "card_number": "4242424242424241"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "card_number is not a valid card number"}
+    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
+
+def test_paying_with_other_luhn_valid_cards_succeeds():
+    client = make_client()
+    # Standard test numbers: Visa 16, Amex 15, a 13-digit and a 19-digit number
+    for number in ["4111111111111111", "378282246310005", "4222222222222", "6011000000000000001"]:
+        created = client.post(
+            "/spaces/1/bookings", json={"member": "annabel", **slot(10 * len(number), 10 * len(number) + 1)}
+        ).get_json()
+
+        response = client.post(
+            f"/bookings/{created['id']}/pay", json={**VALID_CARD, "card_number": number}
+        )
+
+        assert response.status_code == 200, number
+        assert response.get_json()["card_last4"] == number[-4:]
+
 def test_paying_with_an_expired_card_is_rejected():
     client = make_client()
     created = client.post(

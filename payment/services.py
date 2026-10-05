@@ -19,11 +19,28 @@ def member_key(name: str) -> str:
     return name.strip().lower()
 
 
+def passes_luhn(card_number: str) -> bool:
+    """Luhn checksum: from the right, double every second digit (subtracting 9
+    if that gives more than 9); the digit sum must be divisible by 10."""
+    total = 0
+    for position, char in enumerate(reversed(card_number)):
+        digit = int(char)
+        if position % 2 == 1:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
 def validate_card(card_number, expiry, cvc) -> str | None:
     """Returns an error message, or None if the (mocked) card looks valid -
-    right shape and not expired, not a real Luhn/network check."""
+    right shape, passes the Luhn checksum and not expired. Still no network
+    check: it says nothing about whether the card really exists."""
     if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
         return "card_number must be 13-19 digits"
+    if not passes_luhn(card_number):
+        return "card_number is not a valid card number"
     if not isinstance(cvc, str) or not CVC_RE.match(cvc):
         return "cvc must be 3 or 4 digits"
     if not isinstance(expiry, str):
