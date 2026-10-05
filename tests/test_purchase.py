@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from purchase import calculate_booking_price_cents
+from purchase.booking import calculate_booking_price_cents
 
 
 @pytest.mark.parametrize(
