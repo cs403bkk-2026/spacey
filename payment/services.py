@@ -56,6 +56,19 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     return None
 
 
+def authorize_card(card_number, expiry, cvc, force_failure=False):
+    """The (mocked) payment decision for one card, knowing nothing about
+    bookings. Returns None if the card is accepted, otherwise (payload,
+    status): 400 if it doesn't look valid (see validate_card), 402 if
+    force_failure asks this attempt to fail."""
+    card_error = validate_card(card_number, expiry, cvc)
+    if card_error:
+        return {"error": card_error}, 400
+    if force_failure:
+        return {"error": "payment failed"}, 402
+    return None
+
+
 def pay_booking(db, booking_id, body):
     """Pay a booking from the JSON body of POST /bookings/<id>/pay.
     Returns (payload, status)."""
@@ -85,12 +98,9 @@ def mark_booking_paid(db, booking_id, card_number, expiry, cvc, force_failure=Fa
     if row["paid"]:
         return booking_to_json(row), 200
 
-    card_error = validate_card(card_number, expiry, cvc)
-    if card_error:
-        return {"error": card_error}, 400
-
-    if force_failure:
-        return {"error": "payment failed"}, 402
+    rejected = authorize_card(card_number, expiry, cvc, force_failure)
+    if rejected:
+        return rejected
 
     row = repository.mark_paid(db, booking_id, card_number[-4:])
     return booking_to_json(row), 200
