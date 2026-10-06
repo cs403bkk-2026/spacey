@@ -50,30 +50,6 @@ def get_connection(database_url: str) -> psycopg.Connection:
     return conn
 
 
-CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
-CVC_RE = re.compile(r"^\d{3,4}$")
-EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
-
-
-def validate_card(card_number, expiry, cvc) -> str | None:
-    """Returns an error message, or None if the (mocked) card looks valid -
-    right shape and not expired, not a real Luhn/network check."""
-    if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
-        return "card_number must be 13-19 digits"
-    if not isinstance(cvc, str) or not CVC_RE.match(cvc):
-        return "cvc must be 3 or 4 digits"
-    if not isinstance(expiry, str):
-        return "expiry must be in MM/YY format"
-    match = EXPIRY_RE.match(expiry)
-    if match is None:
-        return "expiry must be in MM/YY format"
-    month, year = int(match.group(1)), 2000 + int(match.group(2))
-    now = datetime.now(timezone.utc)
-    if (year, month) < (now.year, now.month):
-        return "card has expired"
-    return None
-
-
 def parse_time(value) -> datetime | None:
     """ISO 8601 with a timezone, e.g. 2026-09-25T09:00:00+07:00."""
     try:
@@ -101,6 +77,35 @@ def parse_window(args) -> tuple[tuple | None, str | None]:
     return (start_time, end_time), None
 
 
+CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
+CVC_RE = re.compile(r"^\d{3,4}$")
+EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
+
+
+def validate_card(card_number, expiry, cvc) -> str | None:
+    """Returns an error message, or None if the (mocked) card looks valid -
+    right shape and not expired, not a real Luhn/network check."""
+    if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
+        return "card_number must be 13-19 digits"
+    if not isinstance(cvc, str) or not CVC_RE.match(cvc):
+        return "cvc must be 3 or 4 digits"
+    if not isinstance(expiry, str):
+        return "expiry must be in MM/YY format"
+    match = EXPIRY_RE.match(expiry)
+    if match is None:
+        return "expiry must be in MM/YY format"
+    month, year = int(match.group(1)), 2000 + int(match.group(2))
+    now = datetime.now(timezone.utc)
+    if (year, month) < (now.year, now.month):
+        return "card has expired"
+    return None
+
+
+def local_time(value: datetime) -> str:
+    """For the HTML pages: Bangkok time, no seconds or offset clutter."""
+    return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
+
+
 def booking_to_json(row: dict) -> dict:
     return {
         **row,
@@ -108,11 +113,6 @@ def booking_to_json(row: dict) -> dict:
         "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
         "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
     }
-
-
-def local_time(value: datetime) -> str:
-    """For the HTML pages: Bangkok time, no seconds or offset clutter."""
-    return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
 
 
 def compute_metrics(cur) -> dict:
@@ -267,6 +267,12 @@ def create_app(
             error=request.args.get("error"),
         )
 
+    def register_user(email, password):
+        """Shared by the JSON API and the HTML register form.
+        Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
+        with app.db.cursor() as cur:
+            return purchase.member.register_user(cur, email, password)
+
     @app.get("/register")
     def register_form():
         return render_template(
@@ -279,18 +285,27 @@ def create_app(
     def register():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-        else:
-            body = request.form
-        with app.db.cursor() as cur:
-            payload, status = purchase.member.register_user(
-                cur, body.get("email"), body.get("password")
-            )
-        if request.is_json:
+            payload, status = register_user(
+                body.get("email"), body.get("password"))
             return jsonify(payload), status
 
+        payload, status = register_user(
+            request.form.get("email"), request.form.get("password")
+        )
         if status >= 400:
             return redirect(url_for("register_form", error=payload["error"]))
         return redirect(url_for("login_form", message="Registered! Please log in."))
+
+    def login_user(email, password):
+        """Shared by the JSON API and the HTML login form.
+        Returns (payload, status) - {"id": ..., "email": ...}, or an error.
+        Wrong password and unknown email give the identical error, so a
+        failed attempt can't be used to find out which emails are registered."""
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.authenticate(cur, email, password)
+        if status == 200:
+            session["user_id"] = payload["id"]
+        return payload, status
 
     @app.get("/login")
     def login_form():
@@ -304,17 +319,13 @@ def create_app(
     def login():
         if request.is_json:
             body = request.get_json(silent=True) or {}
-        else:
-            body = request.form
-        with app.db.cursor() as cur:
-            payload, status = purchase.member.authenticate(
-                cur, body.get("email"), body.get("password")
-            )
-        if status == 200:
-            session["user_id"] = payload["id"]
-        if request.is_json:
+            payload, status = login_user(
+                body.get("email"), body.get("password"))
             return jsonify(payload), status
 
+        payload, status = login_user(
+            request.form.get("email"), request.form.get("password")
+        )
         if status >= 400:
             return redirect(url_for("login_form", error=payload["error"]))
         return redirect(url_for("index"))
@@ -419,7 +430,7 @@ def create_app(
         return payload, status
 
     @app.post("/spaces/<int:space_id>/bookings")
-    def create_booking_from_json(space_id):
+    def create_booking(space_id):
         body = request.get_json(silent=True) or {}
         start_time = parse_time(body.get("start_time"))
         end_time = parse_time(body.get("end_time"))
