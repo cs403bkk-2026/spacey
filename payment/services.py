@@ -5,19 +5,11 @@ import re
 from datetime import datetime, timezone
 
 from payment import repository
+from payment.responses import booking_to_json, error_body
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
 EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
-
-
-def booking_to_json(row: dict) -> dict:
-    return {
-        **row,
-        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
-        "end_time":   row["end_time"].astimezone(timezone.utc).isoformat(),
-        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
-    }
 
 
 def passes_luhn(card_number: str) -> bool:
@@ -34,25 +26,34 @@ def passes_luhn(card_number: str) -> bool:
     return total % 10 == 0
 
 
-def validate_card(card_number, expiry, cvc) -> str | None:
-    """Returns an error message, or None if the (mocked) card looks valid -
-    right shape, passes the Luhn checksum and not expired. Still no network
-    check: it says nothing about whether the card really exists."""
+def validate_card(card_number, expiry, cvc) -> dict | None:
+    """Error body, or None if the card has the right shape, passes Luhn,
+    and is not expired. No network check."""
     if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
-        return "card_number must be 13-19 digits"
+        return error_body(
+            400, "card_number must be 13-19 digits",
+            "invalid_card_number", "/card_number",
+        )
     if not passes_luhn(card_number):
-        return "card_number is not a valid card number"
+        return error_body(
+            400, "card_number is not a valid card number",
+            "invalid_card_number", "/card_number",
+        )
     if not isinstance(cvc, str) or not CVC_RE.match(cvc):
-        return "cvc must be 3 or 4 digits"
+        return error_body(400, "cvc must be 3 or 4 digits", "invalid_cvc", "/cvc")
     if not isinstance(expiry, str):
-        return "expiry must be in MM/YY format"
+        return error_body(
+            400, "expiry must be in MM/YY format", "invalid_expiry", "/expiry",
+        )
     match = EXPIRY_RE.match(expiry)
     if match is None:
-        return "expiry must be in MM/YY format"
+        return error_body(
+            400, "expiry must be in MM/YY format", "invalid_expiry", "/expiry",
+        )
     month, year = int(match.group(1)), 2000 + int(match.group(2))
     now = datetime.now(timezone.utc)
     if (year, month) < (now.year, now.month):
-        return "card has expired"
+        return error_body(400, "card has expired", "card_expired", "/expiry")
     return None
 
 
@@ -77,20 +78,20 @@ def mark_booking_paid(db, booking_id, card_number, expiry, cvc, force_failure=Fa
     already-paid booking is a no-op rather than an error, so a retried
     request can't break the flow or charge twice - and doesn't need a
     card either. Only the card's last 4 digits are ever stored.
-    Returns (payload, status) - the booking, or an {"error": ...}."""
+    Returns (payload, status): the booking, or an error body."""
     row = repository.get_booking(db, booking_id)
     if row is None:
-        return {"error": "booking not found"}, 404
+        return error_body(404, "booking not found", "booking_not_found"), 404
 
     if row["paid"]:
         return booking_to_json(row), 200
 
     card_error = validate_card(card_number, expiry, cvc)
     if card_error:
-        return {"error": card_error}, 400
+        return card_error, 400
 
     if force_failure:
-        return {"error": "payment failed"}, 402
+        return error_body(402, "payment failed", "payment_failed"), 402
 
     row = repository.mark_paid(db, booking_id, card_number[-4:])
     return booking_to_json(row), 200

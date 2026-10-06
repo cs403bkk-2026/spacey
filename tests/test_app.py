@@ -20,6 +20,23 @@ def slot(start_hours, end_hours):
 # A mocked, obviously-fake card - always valid, never a real payment.
 VALID_CARD = {"card_number": "4242424242424242", "expiry": "12/30", "cvc": "123"}
 
+
+def assert_pay_error(response, status, detail, code, pointer=None):
+    assert response.status_code == status
+    assert response.mimetype == "application/problem+json"
+    body = response.get_json()
+    assert body["type"] == "about:blank"
+    assert body["status"] == status
+    assert body["detail"] == detail
+    assert body["code"] == code
+    assert body["instance"].endswith("/pay")
+    if pointer is None:
+        assert "errors" not in body
+    else:
+        assert body["errors"] == [{"pointer": pointer, "detail": detail}]
+    return body
+
+
 def test_root_redirects_to_the_frontend():
     client = make_client()
 
@@ -468,8 +485,7 @@ def test_pay_unknown_booking_returns_404():
 
     response = client.post("/bookings/999/pay", json=VALID_CARD)
 
-    assert response.status_code == 404
-    assert response.get_json() == {"error": "booking not found"}
+    assert_pay_error(response, 404, "booking not found", "booking_not_found")
 
 def test_paying_with_a_valid_card_succeeds_and_shows_only_last4():
     client = make_client()
@@ -497,7 +513,9 @@ def test_paying_with_a_missing_card_field_is_rejected_and_leaves_it_unpaid():
         response = client.post(f"/bookings/{created['id']}/pay", json=card)
 
         assert response.status_code == 400
-        assert "must" in response.get_json()["error"] or "format" in response.get_json()["error"]
+        assert response.mimetype == "application/problem+json"
+        detail = response.get_json()["detail"]
+        assert "must" in detail or "format" in detail
 
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
@@ -519,7 +537,8 @@ def test_paying_with_a_badly_formatted_card_is_rejected():
         response = client.post(f"/bookings/{created['id']}/pay", json=card)
 
         assert response.status_code == 400
-        assert field in response.get_json()["error"]
+        assert response.mimetype == "application/problem+json"
+        assert field in response.get_json()["detail"]
 
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
@@ -535,8 +554,10 @@ def test_paying_with_a_card_that_fails_the_luhn_check_is_rejected():
         json={**VALID_CARD, "card_number": "4242424242424241"},
     )
 
-    assert response.status_code == 400
-    assert response.get_json() == {"error": "card_number is not a valid card number"}
+    assert_pay_error(
+        response, 400, "card_number is not a valid card number",
+        "invalid_card_number", "/card_number",
+    )
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
 def test_paying_with_other_luhn_valid_cards_succeeds():
@@ -564,8 +585,9 @@ def test_paying_with_an_expired_card_is_rejected():
         f"/bookings/{created['id']}/pay", json={**VALID_CARD, "expiry": "01/20"}
     )
 
-    assert response.status_code == 400
-    assert response.get_json() == {"error": "card has expired"}
+    assert_pay_error(
+        response, 400, "card has expired", "card_expired", "/expiry",
+    )
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
 def test_paying_an_already_paid_booking_again_is_still_a_no_op():
@@ -592,8 +614,7 @@ def test_failed_payment_leaves_the_booking_unpaid_and_unlock_returns_402():
         f"/bookings/{created['id']}/pay", json={**VALID_CARD, "force_failure": True}
     )
 
-    assert response.status_code == 402
-    assert response.get_json() == {"error": "payment failed"}
+    assert_pay_error(response, 402, "payment failed", "payment_failed")
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
     unlock = client.post(f"/bookings/{created['id']}/unlock")
@@ -631,8 +652,7 @@ def test_forcing_a_failure_on_an_unknown_booking_returns_404():
 
     response = client.post("/bookings/999/pay", json={**VALID_CARD, "force_failure": True})
 
-    assert response.status_code == 404
-    assert response.get_json() == {"error": "booking not found"}
+    assert_pay_error(response, 404, "booking not found", "booking_not_found")
 
 def test_forcing_a_failure_on_a_paid_booking_leaves_it_paid():
     client = make_client()
