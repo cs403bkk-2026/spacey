@@ -76,8 +76,8 @@ def get_connection(database_url: str) -> psycopg.Connection:
         )
         # The access code handed out when a booking is unlocked (#171).
         # One code per booking, kept so a page refresh shows the same code
-        # instead of a new one. ON DELETE CASCADE because cancelling a
-        # booking deletes its row, and the code is worthless without it.
+        # instead of a new one. The access status columns and dropping the
+        # ON DELETE CASCADE come further down (docs/access-table.md).
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS access (
@@ -158,6 +158,47 @@ def get_connection(database_url: str) -> psycopg.Connection:
                 END IF;
             END $$;
             """
+        )
+        # Access keeps a record of each booking's access instead of losing it
+        # on cancel (docs/access-table.md). Here, after bookings has its time
+        # columns, so the backfill below also works on a fresh database.
+        # Every statement is safe to repeat: this runs on every start.
+        cur.execute(
+            "ALTER TABLE access "
+            "ADD COLUMN IF NOT EXISTS access_status TEXT NOT NULL DEFAULT 'available' "
+            "CHECK (access_status IN ('available', 'used', 'removed', 'expired')), "
+            "ADD COLUMN IF NOT EXISTS booked_start_time TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS booked_end_time TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS checked_in_at TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS checked_out_at TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS space_id INTEGER"
+        )
+        # Copies of the booking's facts, filled only where still missing.
+        # Until the access functions store them themselves, a row made by the
+        # current unlock gets them on the next start.
+        cur.execute(
+            "UPDATE access SET booked_start_time = b.start_time, "
+            "booked_end_time = b.end_time, space_id = b.space_id "
+            "FROM bookings b "
+            "WHERE b.id = access.booking_id AND access.booked_start_time IS NULL"
+        )
+        # The code stops working at the end of the booking unless Purchase
+        # moves it later.
+        cur.execute(
+            "UPDATE access SET expires_at = booked_end_time "
+            "WHERE expires_at IS NULL AND booked_end_time IS NOT NULL"
+        )
+        cur.execute(
+            "UPDATE access SET access_status = 'expired' "
+            "WHERE access_status = 'available' AND expires_at <= now()"
+        )
+        # No foreign key to bookings: a cancelled booking is still deleted,
+        # but its access record must stay (SP-R09). booking_id remains the
+        # primary key, so it is still indexed.
+        cur.execute(
+            "ALTER TABLE access DROP CONSTRAINT IF EXISTS access_booking_id_fkey"
         )
     return conn
 
