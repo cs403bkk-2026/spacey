@@ -8,9 +8,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
-from purchase import expire_unpaid_bookings
 from payment.services import mark_booking_paid, pay_booking as pay_booking_service
-
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -397,13 +395,6 @@ def create_app(
     if reset_on_start:
         reset_tables(app.db)
     seed_starter_space(app.db)
-
-    @app.before_request
-    def release_expired_holds():
-        # Expire before availability, overlap checks, payment and access reads.
-        if request.endpoint not in ("health", "static"):
-            with app.db.cursor() as cur:
-                expire_unpaid_bookings(cur)
 
     # HTML pages live in templates/ (all extending base.html) and the look
     # in static/style.css. Jinja escapes every {{ value }} automatically.
