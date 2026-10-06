@@ -8,7 +8,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
-from payment.services import mark_booking_paid, pay_booking as pay_booking_service
+from payment.api import payment_bp
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -235,31 +235,6 @@ def is_valid_email(email) -> bool:
 def is_valid_password(password) -> bool:
     return isinstance(password, str) and len(password) >= 8
 
-
-CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
-CVC_RE = re.compile(r"^\d{3,4}$")
-EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
-
-
-def validate_card(card_number, expiry, cvc) -> str | None:
-    """Returns an error message, or None if the (mocked) card looks valid -
-    right shape and not expired, not a real Luhn/network check."""
-    if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
-        return "card_number must be 13-19 digits"
-    if not isinstance(cvc, str) or not CVC_RE.match(cvc):
-        return "cvc must be 3 or 4 digits"
-    if not isinstance(expiry, str):
-        return "expiry must be in MM/YY format"
-    match = EXPIRY_RE.match(expiry)
-    if match is None:
-        return "expiry must be in MM/YY format"
-    month, year = int(match.group(1)), 2000 + int(match.group(2))
-    now = datetime.now(timezone.utc)
-    if (year, month) < (now.year, now.month):
-        return "card has expired"
-    return None
-
-
 def member_key(name: str) -> str:
     return name.strip().lower()
 
@@ -392,6 +367,7 @@ def create_app(
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
     app.db = get_connection(database_url)
+    app.register_blueprint(payment_bp)
     if reset_on_start:
         reset_tables(app.db)
     seed_starter_space(app.db)
@@ -840,23 +816,6 @@ def create_app(
             error=request.args.get("error"),
         )
 
-    @app.post("/bookings/<int:booking_id>/confirmation/pay")
-    def pay_from_confirmation(booking_id):
-        payload, status = mark_booking_paid(
-            app,
-            booking_id,
-            request.form.get("card_number"),
-            request.form.get("expiry"),
-            request.form.get("cvc"),
-        )
-        if status >= 400:
-            return redirect(
-                url_for(
-                    "booking_confirmation", booking_id=booking_id, error=payload["error"]
-                )
-            )
-        return redirect(url_for("booking_confirmation", booking_id=booking_id))
-
     @app.post("/bookings/<int:booking_id>/confirmation/unlock")
     def unlock_from_confirmation(booking_id):
         payload, status = issue_access_code(booking_id)
@@ -953,13 +912,6 @@ def create_app(
 
         access_code = secrets.token_hex(4)  # mocked lock integration
         return {"booking_id": booking_id, "access_code": access_code}, 200
-
-    @app.post("/bookings/<int:booking_id>/pay")
-    def pay_booking(booking_id):
-        payload, status = pay_booking_service(
-            app, booking_id, request.get_json(silent=True) or {}
-        )
-        return jsonify(payload), status
 
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):
