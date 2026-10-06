@@ -1,10 +1,10 @@
 import os
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import psycopg
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, request, session
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -20,8 +20,8 @@ DATABASE_URL = os.getenv(
 # everyone out and, worse, an unset default would be a known, public key.
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-not-for-production")
 
-# Business metrics now live in Grafana (#207). /dashboard redirects there and the
-# nav links to it; /metrics (JSON) stays part of the API.
+# Business metrics now live in Grafana (#207). /dashboard redirects there;
+# /metrics (JSON) stays part of the API.
 REPORTING_URL = os.getenv(
     "REPORTING_URL", "https://grafana.cs403bkk26.space/d/spacey-reporting"
 )
@@ -207,21 +207,6 @@ def booked_space_ids(cur, window) -> set:
     return {row["space_id"] for row in cur.fetchall()}
 
 
-LOCAL_TZ = timezone(timedelta(hours=7))  # Bangkok, no daylight saving
-
-
-def parse_form_time(value) -> datetime | None:
-    """The browser's datetime-local field sends no timezone (2026-09-25T09:00),
-    so times typed into the booking form are read as Bangkok time."""
-    try:
-        parsed = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=LOCAL_TZ)
-    return parsed
-
-
 # Deliberately simple: good enough to catch a typo, not full RFC 5322.
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -256,11 +241,6 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     if (year, month) < (now.year, now.month):
         return "card has expired"
     return None
-
-
-def local_time(value: datetime) -> str:
-    """For the HTML pages: Bangkok time, no seconds or offset clutter."""
-    return value.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
 
 
 def booking_to_json(row: dict) -> dict:
@@ -385,61 +365,14 @@ def create_app(
         reset_tables(app.db)
     seed_starter_space(app.db)
 
-    # HTML pages live in templates/ (all extending base.html) and the look
-    # in static/style.css. Jinja escapes every {{ value }} automatically.
-    app.add_template_filter(local_time, "local_time")
-    app.add_template_filter(lambda cents: f"${cents / 100:.2f}", "money")
-    app.jinja_env.globals["reporting_url"] = REPORTING_URL
-
-    @app.context_processor
-    def inject_current_user():
-        """Every template gets the logged-in email (or None) for the nav."""
-        user_id = session.get("user_id")
-        if user_id is None:
-            return {"current_user_email": None}
-
-        with app.db.cursor() as cur:
-            cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-            user = cur.fetchone()
-        if user is None:
-            # stale session, e.g. after a DB reset
-            session.pop("user_id", None)
-            return {"current_user_email": None}
-        return {"current_user_email": user["email"]}
-
     @app.get("/")
     def index():
-        with app.db.cursor() as cur:
-            cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
-            rows = cur.fetchall()
-            cur.execute(
-                "SELECT DISTINCT space_id FROM bookings "
-                "WHERE start_time <= now() AND end_time > now()"
-            )
-            booked_ids = {row["space_id"] for row in cur.fetchall()}
-            # Everything still to come, so members can see which times are
-            # already taken before picking one.
-            cur.execute(
-                "SELECT space_id, start_time, end_time FROM bookings "
-                "WHERE end_time > now() ORDER BY start_time"
-            )
-            upcoming = {}
-            for row in cur.fetchall():
-                upcoming.setdefault(row["space_id"], []).append(row)
-
-        # error is set by the redirect when a form booking fails (see
-        # book_from_form); a successful one goes to the confirmation page.
-        return render_template(
-            "index.html",
-            spaces=rows,
-            booked_ids=booked_ids,
-            upcoming=upcoming,
-            error=request.args.get("error"),
-        )
+        # The browser client lives at /app/ (spacey-frontend). This process
+        # is the JSON API.
+        return redirect("/app/", code=302)
 
     def register_user(email, password):
-        """Shared by the JSON API and the HTML register form.
-        Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
+        """Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
         if not is_valid_email(email):
             return {"error": "enter a valid email address"}, 400
         if not is_valid_password(password):
@@ -461,32 +394,14 @@ def create_app(
 
         return user, 201
 
-    @app.get("/register")
-    def register_form():
-        return render_template(
-            "register.html",
-            registered=request.args.get("registered"),
-            error=request.args.get("error"),
-        )
-
     @app.post("/register")
     def register():
-        if request.is_json:
-            body = request.get_json(silent=True) or {}
-            payload, status = register_user(
-                body.get("email"), body.get("password"))
-            return jsonify(payload), status
-
-        payload, status = register_user(
-            request.form.get("email"), request.form.get("password")
-        )
-        if status >= 400:
-            return redirect(url_for("register_form", error=payload["error"]))
-        return redirect(url_for("login_form", message="Registered! Please log in."))
+        body = request.get_json(silent=True) or {}
+        payload, status = register_user(body.get("email"), body.get("password"))
+        return jsonify(payload), status
 
     def login_user(email, password):
-        """Shared by the JSON API and the HTML login form.
-        Returns (payload, status) - {"id": ..., "email": ...}, or an error.
+        """Returns (payload, status) - {"id": ..., "email": ...}, or an error.
         Wrong password and unknown email give the identical error, so a
         failed attempt can't be used to find out which emails are registered."""
         invalid = {"error": "invalid email or password"}, 401
@@ -506,36 +421,17 @@ def create_app(
         session["user_id"] = user["id"]
         return {"id": user["id"], "email": user["email"]}, 200
 
-    @app.get("/login")
-    def login_form():
-        return render_template(
-            "login.html",
-            error=request.args.get("error"),
-            message=request.args.get("message"),
-        )
-
     @app.post("/login")
     def login():
-        if request.is_json:
-            body = request.get_json(silent=True) or {}
-            payload, status = login_user(
-                body.get("email"), body.get("password"))
-            return jsonify(payload), status
-
-        payload, status = login_user(
-            request.form.get("email"), request.form.get("password")
-        )
-        if status >= 400:
-            return redirect(url_for("login_form", error=payload["error"]))
-        return redirect(url_for("index"))
+        body = request.get_json(silent=True) or {}
+        payload, status = login_user(body.get("email"), body.get("password"))
+        return jsonify(payload), status
 
     @app.post("/logout")
     def logout():
         # Idempotent: logging out when already logged out just does nothing.
         session.pop("user_id", None)
-        if request.is_json:
-            return jsonify(status="ok")
-        return redirect(url_for("index"))
+        return jsonify(status="ok")
 
     @app.get("/health")
     def health():
@@ -697,8 +593,7 @@ def create_app(
         return jsonify(bookings=[booking_to_json(row) for row in rows])
 
     def book_space(space_id, member, start_time, end_time, party_size):
-        """Shared by the JSON API and the HTML booking form.
-        Returns (payload, status) - the booking, or an {"error": ...}."""
+        """Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             # Linked to the account if one is logged in; NULL for a guest.
             payload, status = purchase_booking(
@@ -729,102 +624,6 @@ def create_app(
             body.get("party_size", 1),
         )
         return jsonify(payload), status
-
-    @app.post("/spaces/<int:space_id>/book")
-    def book_from_form(space_id):
-        """The homepage form posts here, then we send the browser back to
-        the space list - with a message, since a form can't read JSON."""
-        member = request.form.get("member", "").strip() or "guest"
-        start_time = parse_form_time(request.form.get("start_time"))
-        end_time = parse_form_time(request.form.get("end_time"))
-
-        if start_time is None or end_time is None:
-            return redirect(url_for("index", error="fill in a start and end time"))
-
-        payload, status = book_space(space_id, member, start_time, end_time, 1)
-        if status >= 400:
-            return redirect(url_for("index", error=payload["error"]))
-
-        return redirect(url_for("booking_confirmation", booking_id=payload["id"]))
-
-    @app.get("/bookings/<int:booking_id>/confirmation")
-    def booking_confirmation(booking_id):
-        """What a member sees after booking: the details, a Pay button and,
-        once paid, an Unlock button that shows the access code."""
-        with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT b.id, b.member, b.paid, b.start_time, b.end_time, "
-                "b.amount_cents, b.card_last4, s.name AS space_name "
-                "FROM bookings b JOIN spaces s ON s.id = b.space_id "
-                "WHERE b.id = %s",
-                (booking_id,),
-            )
-            booking = cur.fetchone()
-
-        if booking is None:
-            return render_template("booking_not_found.html"), 404
-
-        return render_template(
-            "confirmation.html",
-            booking=booking,
-            code=request.args.get("code"),
-            error=request.args.get("error"),
-        )
-
-    @app.post("/bookings/<int:booking_id>/confirmation/pay")
-    def pay_from_confirmation(booking_id):
-        payload, status = mark_booking_paid(
-            booking_id,
-            request.form.get("card_number"),
-            request.form.get("expiry"),
-            request.form.get("cvc"),
-        )
-        if status >= 400:
-            return redirect(
-                url_for(
-                    "booking_confirmation", booking_id=booking_id, error=payload["error"]
-                )
-            )
-        return redirect(url_for("booking_confirmation", booking_id=booking_id))
-
-    @app.post("/bookings/<int:booking_id>/confirmation/unlock")
-    def unlock_from_confirmation(booking_id):
-        payload, status = issue_access_code(booking_id)
-        if status >= 400:
-            return redirect(
-                url_for(
-                    "booking_confirmation",
-                    booking_id=booking_id,
-                    error=payload["error"],
-                )
-            )
-        return redirect(
-            url_for(
-                "booking_confirmation",
-                booking_id=booking_id,
-                code=payload["access_code"],
-            )
-        )
-
-    @app.get("/bookings/mine")
-    def my_bookings():
-        """What a logged-in member sees: every booking they made, with a
-        link to each one's confirmation page (Pay or Unlock, whichever
-        applies)."""
-        if session.get("user_id") is None:
-            return redirect(url_for("login_form"))
-
-        with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT b.id, b.paid, b.start_time, b.end_time, b.amount_cents, "
-                "s.name AS space_name "
-                "FROM bookings b JOIN spaces s ON s.id = b.space_id "
-                "WHERE b.user_id = %s ORDER BY b.start_time",
-                (session["user_id"],),
-            )
-            rows = cur.fetchall()
-
-        return render_template("my_bookings.html", bookings=rows)
 
     @app.get("/bookings")
     def list_bookings():

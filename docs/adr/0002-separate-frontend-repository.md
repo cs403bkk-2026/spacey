@@ -2,7 +2,7 @@
 
 Date: 2026-10-02
 
-Status: Accepted decision; frontend delivered, backend UI cleanup and verification pending.
+Status: Accepted decision; frontend delivered and server-rendered UI removed. Live `/app/` verification still pending.
 
 ## Decision and rationale
 
@@ -63,14 +63,14 @@ autonomy is an expected benefit to verify, not a consequence of moving files alo
 The frontend delivery PR is merged. The following cleanup and verification
 items remain open in this record until supported by implementation evidence:
 
-- [ ] Inventory the remaining HTML routes, templates, assets and form helpers,
+- [x] Inventory the remaining HTML routes, templates, assets and form helpers,
   including `book_from_form`; check retained callers before deleting them.
-- [ ] Remove obsolete server-rendered UI and duplicate form paths, preserving
+- [x] Remove obsolete server-rendered UI and duplicate form paths, preserving
   the JSON API and authentication behaviour used by the extracted frontend.
 - [ ] Keep request/response adaptation in `app.py`; move business operations
   and persistence towards their corresponding domain modules without requiring
   a framework rewrite or immediate service split.
-- [ ] Align OpenAPI and tests with retained behaviour and intentional removals;
+- [x] Align OpenAPI and tests with retained behaviour and intentional removals;
   check success, validation errors and relevant authentication/failure cases.
 - [ ] Verify booking, payment and access through `/app/` after cleanup, recording
   frontend/backend revisions and the environment.

@@ -6,11 +6,9 @@ info:
     and get access through a mocked lock.
 
 
-    This document covers the JSON API only. A few browser routes are not
-    listed here: the HTML pages (the space list at `/`, the booking form's
-    target `POST /spaces/{spaceId}/book`, the booking confirmation page and its
-    Pay/Unlock buttons) and `/dashboard`, which redirects to the external
-    Grafana business metrics report.
+    This document covers the JSON API. `GET /` redirects to the browser
+    client at `/app/`. `GET /dashboard` redirects to the external Grafana
+    business metrics report.
   version: "1.0"
 servers:
   - url: /
@@ -446,7 +444,6 @@ paths:
       tags: [accounts]
       summary: Create an account.
       description: >
-        Also available as a plain HTML form at GET /register, for a browser.
         Email is matched trimmed and lower-cased, and must be unique. The
         password is hashed (werkzeug.security) and never stored or returned
         as plain text.
@@ -488,9 +485,8 @@ paths:
       tags: [accounts]
       summary: Start a session.
       description: >
-        Also available as a plain HTML form at GET /login. A wrong password
-        and an unknown email return the identical error, so a login attempt
-        can't be used to find out which emails are registered.
+        A wrong password and an unknown email return the identical error, so
+        a login attempt can't be used to find out which emails are registered.
       requestBody:
         required: true
         content:
