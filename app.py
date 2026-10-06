@@ -11,10 +11,11 @@ from access import issue_access_code
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
 import purchase.member
+import purchase.schema
 import purchase.space
 from purchase.booking import LOCAL_TZ, parse_form_time
 from purchase.member import subscribe
-from purchase.space import booked_space_ids, is_valid_capacity, is_valid_name, is_valid_price
+from purchase.space import booked_space_ids
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -45,124 +46,7 @@ def get_connection(database_url: str) -> psycopg.Connection:
             "Is Postgres running? Try: docker compose up db -d"
         ) from None
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS spaces (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                capacity INTEGER NOT NULL
-            )
-            """
-        )
-        cur.execute(
-            "ALTER TABLE spaces ADD COLUMN IF NOT EXISTS "
-            "price_cents INTEGER NOT NULL DEFAULT 0"
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS bookings (
-                id SERIAL PRIMARY KEY,
-                space_id INTEGER NOT NULL REFERENCES spaces (id),
-                member TEXT NOT NULL,
-                paid BOOLEAN NOT NULL
-            )
-            """
-        )
-        # Mocked subscriptions, keyed by the trimmed lower-case member name.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS subscriptions (
-                member TEXT PRIMARY KEY,
-                active BOOLEAN NOT NULL DEFAULT TRUE,
-                started_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        # The access code handed out when a booking is unlocked (#171).
-        # One code per booking, kept so a page refresh shows the same code
-        # instead of a new one. ON DELETE CASCADE because cancelling a
-        # booking deletes its row, and the code is worthless without it.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS access (
-                booking_id INTEGER PRIMARY KEY
-                    REFERENCES bookings (id) ON DELETE CASCADE,
-                access_code TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        # First step of #120 (real accounts): just registration for now.
-        # Storing only a hash, never the password itself.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        # Added after the table already existed, so ALTER instead of editing
-        # CREATE TABLE above - existing databases get the new columns too.
-        cur.execute(
-            "ALTER TABLE bookings "
-            "ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ, "
-            "ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ"
-        )
-        # Price charged at booking time, so a later price change can't rewrite past revenue.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount_cents INTEGER"
-        )
-        # Links a booking to the account that was logged in when it was made
-        # (#134, the first concrete step of #86). NULL for a guest booking
-        # made while logged out, and for every booking made before this.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
-            "user_id INTEGER REFERENCES users (id)"
-        )
-        # Last 4 digits only (#119) - never the full card number or CVC.
-        # NULL until the booking is actually paid.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS card_last4 TEXT"
-        )
-        # When the booking was made (not when the space is used), so the
-        # dashboard can show growth over time. Bookings made before this
-        # column existed get the time the column was added - the best we
-        # have, and it keeps the column NOT NULL.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
-            "created_at TIMESTAMPTZ NOT NULL DEFAULT now()"
-        )
-        # Bookings from before that column existed get the space's current price (best we have).
-        cur.execute(
-            "UPDATE bookings SET amount_cents = s.price_cents "
-            "FROM spaces s "
-            "WHERE s.id = bookings.space_id AND bookings.amount_cents IS NULL"
-        )
-        # Belt-and-suspenders against double-booking: the app already checks
-        # for overlaps before inserting, but that check-then-insert isn't
-        # atomic, so two simultaneous requests could both pass the check.
-        # This constraint makes Postgres itself reject the second insert.
-        cur.execute("CREATE EXTENSION IF NOT EXISTS btree_gist")
-        cur.execute(
-            """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint WHERE conname = 'no_overlapping_bookings'
-                ) THEN
-                    ALTER TABLE bookings
-                    ADD CONSTRAINT no_overlapping_bookings
-                    EXCLUDE USING gist (
-                        space_id WITH =,
-                        tstzrange(start_time, end_time) WITH &&
-                    );
-                END IF;
-            END $$;
-            """
-        )
+        purchase.schema.create_tables(cur)
     return conn
 
 
@@ -474,28 +358,12 @@ def create_app(
     @app.post("/spaces")
     def create_space():
         body = request.get_json(silent=True) or {}
-        name = body.get("name")
-        capacity = body.get("capacity")
-        price_cents = body.get("price_cents", 0)
-
-        if name is None or capacity is None:
-            return jsonify(error="name and capacity are required"), 400
-        if not is_valid_name(name):
-            return jsonify(error="name must not be empty"), 400
-        if not is_valid_capacity(capacity):
-            return jsonify(
-                error="capacity must be a whole number of at least 1"
-            ), 400
-        name = name.strip()
-        if not is_valid_price(price_cents):
-            return jsonify(
-                error="price_cents must be a non-negative integer"
-            ), 400
-
         with app.db.cursor() as cur:
-            space = purchase.space.create_space(cur, name, capacity, price_cents)
-
-        return jsonify(space), 201
+            payload, status = purchase.space.create_space(
+                cur, body.get("name"), body.get("capacity"),
+                body.get("price_cents", 0),
+            )
+        return jsonify(payload), status
 
     @app.get("/spaces/<int:space_id>")
     def get_space(space_id):
@@ -515,34 +383,9 @@ def create_app(
     @app.patch("/spaces/<int:space_id>")
     def update_space(space_id):
         body = request.get_json(silent=True) or {}
-        if not any(field in body for field in ("name", "capacity", "price_cents")):
-            return jsonify(
-                error="provide name, capacity and/or price_cents to update"
-            ), 400
-
         with app.db.cursor() as cur:
-            if purchase.space.get_space(cur, space_id) is None:
-                return jsonify(error="space not found"), 404
-
-            name = body.get("name")
-            capacity = body.get("capacity")
-            price_cents = body.get("price_cents")
-            if "name" in body and not is_valid_name(name):
-                return jsonify(error="name must not be empty"), 400
-            if "capacity" in body and not is_valid_capacity(capacity):
-                return jsonify(
-                    error="capacity must be a whole number of at least 1"
-                ), 400
-            if "price_cents" in body and not is_valid_price(price_cents):
-                return jsonify(
-                    error="price_cents must be a non-negative integer"
-                ), 400
-            if name is not None:
-                name = name.strip()
-
-            space = purchase.space.update_space(cur, space_id, name, capacity, price_cents)
-
-        return jsonify(space)
+            payload, status = purchase.space.update_space(cur, space_id, body)
+        return jsonify(payload), status
 
     @app.delete("/spaces/<int:space_id>")
     def delete_space(space_id):
