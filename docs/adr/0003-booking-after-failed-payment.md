@@ -33,6 +33,29 @@ completion or the remaining request/reconciliation contract.
 A failed attempt alone does not cancel the booking or release its interval.
 A repeat of a successful operation must not collect again.
 
+## Payment attempt and outcome notification
+
+The supplied discussion notes add these integration decisions:
+
+- The member initiates payment by pressing Pay in Frontend. A payment attempt
+  is created and Payments processes it. The request routing and placement of
+  Purchase's pre-collection hold check still need an explicit API contract.
+- Paying again after a confirmed failure creates a new payment ID for the same
+  booking. It does not create a new booking or restart the hold.
+- Payments calls a Purchase-owned API to notify it of success or failure.
+  Purchase implements that API and owns the booking update; Payments does not
+  write Purchase's booking rows directly.
+
+A new attempt after failure differs from resolving an unknown result or
+repeating a successful operation. The latter must refer to the same operation
+and must not create another collection. How a repeated Frontend request is
+recognized before creating a new payment ID remains to be specified.
+
+If collection finishes but notification to Purchase fails, that notification
+failure must not be mistaken for a failed collection. Outcome redelivery,
+acknowledgement, and duplicate handling still need agreement. This document
+records the required boundary, not an implemented delivery mechanism.
+
 ## Reservation expiry and late success
 
 According to the supplied Purchase clarification, Purchase owns the 15-minute
@@ -57,10 +80,15 @@ move was verified for this document.
 
 ## Remaining implementation contract
 
-- Agree the request/result fields and how Purchase passes an eligible booking
-  reference and recorded amount to Payments.
-- Specify operation identity: a new attempt after failure must be distinguishable
-  from a repeat after success or unknown.
+- Agree collection and Purchase-notification API paths, request/result fields,
+  and error responses, including the booking reference and recorded amount.
+- Place Purchase's hold check before collection in the Frontend-initiated flow.
+- Specify how requests refer to payment IDs and how duplicate requests are
+  identified; a confirmed-failure retry creates a new ID, while unknown/success
+  resolution refers to the same operation.
+- Agree acknowledgement and redelivery when notifying Purchase fails, with
+  duplicate outcome handling that cannot collect twice or overwrite a newer
+  booking decision with an older result.
 - Specify how unknown outcomes are checked and how a late success and resulting
   refund request are delivered and processed without duplicate collection or
   refund.
@@ -78,7 +106,12 @@ refund implementation is PT-013. The full provider contract is PT-002.
 
 Review scenarios for the follow-up implementation:
 
-- Failure retains an unpaid booking and its price during the active hold.
+- Failure retains an unpaid booking and its price during the active hold;
+  a new attempt after confirmed failure has a new payment ID for that booking.
+- Success and failure are notified through Purchase's API, with booking updates
+  performed by Purchase rather than Payments.
+- Failed outcome notification does not trigger another collection; duplicate
+  notification handling follows the agreed delivery contract.
 - A retry does not extend the hold; Purchase checks it before collection.
 - Unknown is resolved as the same operation without a second collection.
 - Late success is recorded as success; Purchase either confirms the booking if
@@ -90,6 +123,9 @@ requirements, not executed tests or deployment evidence.
 
 ## Sources
 
+- User-supplied discussion screenshot on 2026-10-06: Frontend initiates payment,
+  retry after failure creates a new payment ID, and Payments notifies Purchase
+  through Purchase's API for booking updates, including failure.
 - Purchase confirmation of unpaid, retryable bookings after failed payment,
   relayed by the PT-003 owner on 2026-10-06; no original discussion URL supplied.
 - The user-supplied agreement, section 5, "Reservation expiry and late success":
