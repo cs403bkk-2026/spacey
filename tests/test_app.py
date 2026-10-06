@@ -20,190 +20,13 @@ def slot(start_hours, end_hours):
 # A mocked, obviously-fake card - always valid, never a real payment.
 VALID_CARD = {"card_number": "4242424242424242", "expiry": "12/30", "cvc": "123"}
 
-def test_homepage_lists_spaces_with_availability():
+def test_root_redirects_to_the_frontend():
     client = make_client()
-    client.post(
-        "/spaces",
-        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
-    )
-    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(-1, 1)})
 
     response = client.get("/")
 
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    assert "Founders Desk" in body
-    assert "free right now" in body
-    assert "Meeting Room A" in body
-    assert "$15.00" in body
-    assert "booked right now" in body
-
-BANGKOK = timezone(timedelta(hours=7))
-
-def form_slot(start_hours, end_hours):
-    """What the browser's datetime-local fields send: a local (Bangkok)
-    wall-clock time with no timezone on it."""
-    local_now = NOW.astimezone(BANGKOK)
-    return {
-        "start_time": (local_now + timedelta(hours=start_hours)).strftime(
-            "%Y-%m-%dT%H:%M"
-        ),
-        "end_time": (local_now + timedelta(hours=end_hours)).strftime(
-            "%Y-%m-%dT%H:%M"
-        ),
-    }
-
-def test_homepage_shows_a_booking_form_for_every_space():
-    client = make_client()
-    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6})
-    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(-1, 1)})
-
-    body = client.get("/").get_data(as_text=True)
-
-    assert 'name="member"' in body
-    # space 2 is booked right now, but you can still book it for later
-    assert '<form method="post" action="/spaces/1/book">' in body
-    assert '<form method="post" action="/spaces/2/book">' in body
-
-def test_homepage_lists_the_upcoming_booked_times_of_a_space():
-    client = make_client()
-    client.post(
-        "/spaces/1/bookings",
-        json={
-            "member": "gregory",
-            "start_time": "2030-01-01T10:00:00+07:00",
-            "end_time": "2030-01-01T11:00:00+07:00",
-        },
-    )
-
-    body = client.get("/").get_data(as_text=True)
-
-    assert "Already booked:" in body
-    assert "2030-01-01 10:00 to 2030-01-01 11:00" in body
-
-def test_homepage_says_when_a_space_has_no_bookings_coming_up():
-    client = make_client()
-
-    body = client.get("/").get_data(as_text=True)
-
-    assert "No bookings coming up." in body
-
-def test_can_book_a_later_slot_while_the_space_is_booked_right_now():
-    client = make_client()
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(-1, 1)})
-
-    response = client.post(
-        "/spaces/1/book", data={"member": "gregory", **form_slot(4, 5)}
-    )
-
     assert response.status_code == 302
-    assert response.headers["Location"] == "/bookings/2/confirmation"
-
-def test_booking_an_overlapping_slot_shows_the_already_booked_message():
-    client = make_client()
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 3)})
-
-    response = client.post(
-        "/spaces/1/book", data={"member": "gregory", **form_slot(2, 4)}
-    )
-
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-    assert "space is already booked for that time" in body
-
-def test_booking_through_the_form_makes_the_space_unavailable():
-    client = make_client()
-
-    response = client.post(
-        "/spaces/1/book", data={"member": "annabel", **form_slot(-1, 1)}
-    )
-
-    assert response.status_code == 302
-    assert response.headers["Location"] == "/bookings/1/confirmation"
-
-    body = client.get("/").get_data(as_text=True)
-    assert "booked right now" in body
-    # still bookable for a later slot, so the form stays
-    assert '<form method="post" action="/spaces/1/book">' in body
-
-    booking = client.get("/bookings/1").get_json()
-    assert booking["member"] == "annabel"
-    assert booking["paid"] is False
-
-def test_book_pay_unlock_all_the_way_through_the_browser():
-    client = make_client()
-
-    booked = client.post(
-        "/spaces/1/book", data={"member": "annabel", **form_slot(-1, 1)}
-    )
-    page = client.get(booked.headers["Location"]).get_data(as_text=True)
-
-    # the confirmation page shows the booking, and asks for payment first
-    assert "Booking #1" in page
-    assert "Founders Desk" in page
-    assert "annabel" in page
-    assert "Not paid yet" in page
-    assert ">Pay</button>" in page
-    assert ">Unlock</button>" not in page
-
-    paid = client.post("/bookings/1/confirmation/pay", data=VALID_CARD)
-    page = client.get(paid.headers["Location"]).get_data(as_text=True)
-
-    assert "Paid." in page
-    assert ">Unlock</button>" in page
-
-    unlocked = client.post("/bookings/1/confirmation/unlock")
-    page = client.get(unlocked.headers["Location"]).get_data(as_text=True)
-
-    assert "Your access code:" in page
-    code = page.split("<strong>")[1].split("</strong>")[0]
-    assert len(code) == 8  # secrets.token_hex(4)
-
-def test_confirmation_page_unlock_without_paying_shows_the_error():
-    client = make_client()
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
-
-    response = client.post("/bookings/1/confirmation/unlock")
-    page = client.get(response.headers["Location"]).get_data(as_text=True)
-
-    assert "booking is not paid" in page
-    assert "Your access code" not in page
-
-def test_confirmation_page_for_unknown_booking_returns_404():
-    client = make_client()
-
-    response = client.get("/bookings/999/confirmation")
-
-    assert response.status_code == 404
-    assert "Booking not found" in response.get_data(as_text=True)
-
-def test_confirmation_page_shows_times_in_bangkok_time():
-    client = make_client()
-    client.post(
-        "/spaces/1/book",
-        data={
-            "member": "annabel",
-            "start_time": "2026-09-25T09:00",
-            "end_time": "2026-09-25T10:00",
-        },
-    )
-
-    page = client.get("/bookings/1/confirmation").get_data(as_text=True)
-
-    assert "2026-09-25 09:00" in page
-    assert "2026-09-25 10:00" in page
-
-def test_confirmation_page_shows_the_total_before_and_after_paying():
-    client = make_client()
-    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500})
-
-    client.post("/spaces/2/book", data={"member": "annabel", **form_slot(1, 2)})
-    before = client.get("/bookings/1/confirmation").get_data(as_text=True)
-    assert "Not paid yet - total $15.00" in before
-    assert ">Pay</button>" in before
-
-    client.post("/bookings/1/confirmation/pay", data=VALID_CARD)
-    after = client.get("/bookings/1/confirmation").get_data(as_text=True)
-    assert "Paid. Total: $15.00" in after
+    assert response.headers["Location"] == "/app/"
 
 def test_three_hours_cost_three_times_one_hour():
     client = make_client()
@@ -250,17 +73,6 @@ def test_an_uneven_duration_is_rounded_to_whole_cents():
 
     assert booking["amount_cents"] == 333
 
-def test_homepage_shows_the_price_as_an_hourly_rate():
-    client = make_client()
-    client.post(
-        "/spaces",
-        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
-    )
-
-    body = client.get("/").get_data(as_text=True)
-
-    assert "$15.00 per hour" in body
-
 def test_booking_responses_include_the_amount_charged():
     client = make_client()
     client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500})
@@ -289,66 +101,6 @@ def test_a_price_change_after_booking_does_not_change_the_amount_shown():
     client.patch("/spaces/2", json={"price_cents": 2000})
 
     assert client.get(f"/bookings/{created['id']}").get_json()["amount_cents"] == 500
-
-def test_a_subscribers_booking_shows_zero_amount_on_the_confirmation_page():
-    client = make_client()
-    client.post("/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500})
-    client.post("/members/annabel/subscribe")
-
-    client.post("/spaces/2/book", data={"member": "annabel", **form_slot(1, 2)})
-    page = client.get("/bookings/1/confirmation").get_data(as_text=True)
-
-    assert "Paid. Total: $0.00" in page
-
-def test_form_times_are_read_as_bangkok_time():
-    client = make_client()
-
-    client.post(
-        "/spaces/1/book",
-        data={
-            "member": "annabel",
-            "start_time": "2026-09-25T09:00",
-            "end_time": "2026-09-25T10:00",
-        },
-    )
-
-    booking = client.get("/bookings/1").get_json()
-    # 09:00 in Bangkok (UTC+7) is 02:00 UTC
-    assert booking["start_time"] == "2026-09-25T02:00:00+00:00"
-    assert booking["end_time"] == "2026-09-25T03:00:00+00:00"
-
-def test_form_booking_a_taken_slot_shows_the_error():
-    client = make_client()
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 3)})
-
-    response = client.post(
-        "/spaces/1/book", data={"member": "gregory", **form_slot(2, 4)}
-    )
-
-    assert response.status_code == 302
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-    assert "space is already booked for that time" in body
-
-def test_form_without_times_shows_an_error():
-    client = make_client()
-
-    response = client.post("/spaces/1/book", data={"member": "annabel"})
-
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-    assert "fill in a start and end time" in body
-
-def test_homepage_escapes_space_names():
-    client = make_client()
-    client.post(
-        "/spaces", json={"name": "<script>alert(1)</script>", "capacity": 1}
-    )
-
-    response = client.get("/")
-
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    assert "<script>alert(1)</script>" not in body
-    assert "&lt;script&gt;" in body
 
 def test_health_reports_running_revision(monkeypatch):
     monkeypatch.setenv("APP_REVISION", "test-revision")
@@ -785,32 +537,6 @@ def test_paying_with_an_expired_card_is_rejected():
     assert response.get_json() == {"error": "card has expired"}
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
-def test_confirmation_page_pay_form_has_card_fields_and_shows_last4_once_paid():
-    client = make_client()
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
-
-    before = client.get("/bookings/1/confirmation").get_data(as_text=True)
-    assert 'name="card_number"' in before
-    assert 'name="expiry"' in before
-    assert 'name="cvc"' in before
-
-    client.post("/bookings/1/confirmation/pay", data=VALID_CARD)
-    after = client.get("/bookings/1/confirmation").get_data(as_text=True)
-
-    assert "card ending 4242" in after
-
-def test_confirmation_page_pay_with_an_invalid_card_shows_the_error():
-    client = make_client()
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
-
-    response = client.post(
-        "/bookings/1/confirmation/pay", data={**VALID_CARD, "cvc": "12"}
-    )
-    page = client.get(response.headers["Location"]).get_data(as_text=True)
-
-    assert "cvc must be 3 or 4 digits" in page
-    assert "Not paid yet" in page
-
 def test_paying_an_already_paid_booking_again_is_still_a_no_op():
     client = make_client()
     created = client.post(
@@ -1035,36 +761,11 @@ def test_registering_with_a_short_password_is_rejected():
             "error": "password must be at least 8 characters"
         }
 
-    # nothing got created
-    assert client.get("/register").status_code == 200
-
-def test_register_form_creates_an_account_and_redirects_with_a_message():
-    client = make_client()
-
-    response = client.post(
-        "/register", data={"email": "annabel@example.com", "password": "hunter22"}
+    # nothing got created, so a later valid registration still succeeds
+    created = client.post(
+        "/register", json={"email": "annabel@example.com", "password": "hunter22"}
     )
-
-    assert response.status_code == 302
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-    assert "Registered!" in body
-
-def test_register_form_with_invalid_input_shows_the_error():
-    client = make_client()
-
-    response = client.post(
-        "/register", data={"email": "not-an-email", "password": "hunter22"}
-    )
-
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-    assert "enter a valid email address" in body
-
-def test_homepage_links_to_register():
-    client = make_client()
-
-    body = client.get("/").get_data(as_text=True)
-
-    assert 'href="/register"' in body
+    assert created.status_code == 201
 
 def register(client, email="annabel@example.com", password="hunter22"):
     return client.post("/register", json={"email": email, "password": password})
@@ -1111,13 +812,16 @@ def test_logout_ends_the_session():
     client = make_client()
     register(client)
     client.post("/login", json={"email": "annabel@example.com", "password": "hunter22"})
-    assert "Logged in as annabel@example.com" in client.get("/").get_data(as_text=True)
 
-    response = client.post("/logout", json={})
+    response = client.post("/logout")
 
     assert response.status_code == 200
-    assert "Logged in as" not in client.get("/").get_data(as_text=True)
-    assert 'href="/login"' in client.get("/").get_data(as_text=True)
+    assert response.get_json() == {"status": "ok"}
+
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    assert created["user_id"] is None
 
 def test_logout_when_not_logged_in_is_a_no_op():
     client = make_client()
@@ -1125,39 +829,7 @@ def test_logout_when_not_logged_in_is_a_no_op():
     response = client.post("/logout", json={})
 
     assert response.status_code == 200
-
-def test_login_form_logs_in_and_redirects_to_the_homepage():
-    client = make_client()
-    register(client)
-
-    response = client.post(
-        "/login", data={"email": "annabel@example.com", "password": "hunter22"}
-    )
-
-    assert response.status_code == 302
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-    assert "Logged in as annabel@example.com" in body
-
-def test_login_form_with_wrong_password_shows_the_error():
-    client = make_client()
-    register(client)
-
-    response = client.post(
-        "/login", data={"email": "annabel@example.com", "password": "wrong-password"}
-    )
-
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-    assert "invalid email or password" in body
-
-def test_logout_button_on_the_homepage_actually_logs_out():
-    client = make_client()
-    register(client)
-    client.post("/login", json={"email": "annabel@example.com", "password": "hunter22"})
-
-    response = client.post("/logout")
-    body = client.get(response.headers["Location"]).get_data(as_text=True)
-
-    assert "Logged in as" not in body
+    assert response.get_json() == {"status": "ok"}
 
 def login(client, email="annabel@example.com", password="hunter22"):
     return client.post("/login", json={"email": email, "password": password})
@@ -1195,15 +867,6 @@ def test_logging_out_before_booking_leaves_it_unlinked():
 
     assert created["user_id"] is None
 
-def test_a_form_booking_while_logged_in_is_linked_to_the_account():
-    client = make_client()
-    register(client)
-    user = login(client).get_json()
-
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
-
-    assert client.get("/bookings/1").get_json()["user_id"] == user["id"]
-
 def test_user_id_stays_on_the_booking_through_pay_and_list():
     client = make_client()
     register(client)
@@ -1220,87 +883,6 @@ def test_user_id_stays_on_the_booking_through_pay_and_list():
         client.get("/spaces/1/bookings").get_json()["bookings"][0]["user_id"]
         == user["id"]
     )
-
-def test_logged_out_visitors_are_sent_to_the_login_page():
-    client = make_client()
-
-    response = client.get("/bookings/mine")
-
-    assert response.status_code == 302
-    assert response.headers["Location"] == "/login"
-
-def test_my_bookings_page_lists_only_the_logged_in_users_bookings():
-    client = make_client()
-    client.post(
-        "/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500}
-    )
-    register(client, email="annabel@example.com")
-    register(client, email="gregory@example.com")
-
-    login(client, email="annabel@example.com")
-    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)})
-    client.post("/logout", json={})
-
-    login(client, email="gregory@example.com")
-    client.post("/spaces/2/bookings", json={"member": "gregory", **slot(3, 4)})
-
-    body = client.get("/bookings/mine").get_data(as_text=True)
-
-    assert "Meeting Room A" in body
-    assert "Founders Desk" not in body  # that one is annabel's, not gregory's
-
-def test_my_bookings_page_shows_space_time_price_and_paid_status():
-    client = make_client()
-    client.post(
-        "/spaces", json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500}
-    )
-    register(client)
-    login(client)
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-
-    unpaid_body = client.get("/bookings/mine").get_data(as_text=True)
-    assert "Founders Desk" in unpaid_body
-    assert "$25.00" in unpaid_body  # $25.00/hour, booked for 1 hour
-    assert "not paid" in unpaid_body
-    assert ">Pay<" in unpaid_body
-
-    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-    paid_body = client.get("/bookings/mine").get_data(as_text=True)
-    assert "not paid" not in paid_body
-    assert ">Get unlock code<" in paid_body
-
-def test_my_bookings_link_to_the_confirmation_page_for_the_unlock_code():
-    client = make_client()
-    register(client)
-    login(client)
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-
-    body = client.get("/bookings/mine").get_data(as_text=True)
-    assert f'href="/bookings/{created["id"]}/confirmation"' in body
-
-def test_my_bookings_page_when_there_are_none_says_so():
-    client = make_client()
-    register(client)
-    login(client)
-
-    body = client.get("/bookings/mine").get_data(as_text=True)
-
-    assert "No bookings yet." in body
-
-def test_homepage_links_to_my_bookings_only_when_logged_in():
-    client = make_client()
-
-    assert 'href="/bookings/mine"' not in client.get("/").get_data(as_text=True)
-
-    register(client)
-    login(client)
-
-    assert 'href="/bookings/mine"' in client.get("/").get_data(as_text=True)
 
 def test_subscribing_returns_an_active_subscription():
     client = make_client()
@@ -1382,14 +964,6 @@ def test_a_subscribers_booking_adds_no_per_booking_revenue():
 
     assert metrics["paid_bookings"] == 1
     assert metrics["revenue_cents"] == 0
-
-def test_form_booking_by_a_subscriber_is_paid():
-    client = make_client()
-    client.post("/members/annabel/subscribe")
-
-    client.post("/spaces/1/book", data={"member": "annabel", **form_slot(1, 2)})
-
-    assert client.get("/bookings/1").get_json()["paid"] is True
 
 def test_metrics_reports_spaces_bookings_and_members():
     client = make_client()
@@ -2001,18 +1575,8 @@ def test_dashboard_redirects_to_the_grafana_report():
     assert response.headers["Location"] == "https://grafana.cs403bkk26.space/d/spacey-reporting"
 
 
-def test_nav_links_to_the_grafana_report():
-    client = make_client()
-
-    body = client.get("/").get_data(as_text=True)
-
-    assert 'href="https://grafana.cs403bkk26.space/d/spacey-reporting"' in body
-    assert 'href="/dashboard"' not in body
-
-
 def test_reporting_url_can_be_configured(monkeypatch):
     monkeypatch.setattr("app.REPORTING_URL", "https://example.test/report")
     client = make_client()
 
     assert client.get("/dashboard").headers["Location"] == "https://example.test/report"
-    assert 'href="https://example.test/report"' in client.get("/").get_data(as_text=True)
