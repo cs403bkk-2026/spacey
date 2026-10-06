@@ -25,6 +25,11 @@ for changing booking rows or releasing intervals.
 | Unknown | Checks or retries the same operation without another collection | Keeps payment unconfirmed; does not grant access |
 | Success | Records and returns normal success | Applies the result according to booking eligibility; coordinates access for a confirmed paid booking |
 
+Purchase confirmed, as relayed by the PT-003 owner on 2026-10-06, that after
+a failed payment the booking stays unpaid and retryable while its 15-minute
+hold is active. This confirms the failed-payment policy, not implementation
+completion or the remaining request/reconciliation contract.
+
 A failed attempt alone does not cancel the booking or release its interval.
 A repeat of a successful operation must not collect again.
 
@@ -85,6 +90,8 @@ requirements, not executed tests or deployment evidence.
 
 ## Sources
 
+- Purchase confirmation of unpaid, retryable bookings after failed payment,
+  relayed by the PT-003 owner on 2026-10-06; no original discussion URL supplied.
 - The user-supplied agreement, section 5, "Reservation expiry and late success":
   attributed to Purchase's clarification. Its original discussion URL was not
   supplied; this document does not claim independent verification of that source.
