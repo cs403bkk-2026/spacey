@@ -49,30 +49,6 @@ def get_connection(database_url: str) -> psycopg.Connection:
     return conn
 
 
-CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
-CVC_RE = re.compile(r"^\d{3,4}$")
-EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
-
-
-def validate_card(card_number, expiry, cvc) -> str | None:
-    """Returns an error message, or None if the (mocked) card looks valid -
-    right shape and not expired, not a real Luhn/network check."""
-    if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
-        return "card_number must be 13-19 digits"
-    if not isinstance(cvc, str) or not CVC_RE.match(cvc):
-        return "cvc must be 3 or 4 digits"
-    if not isinstance(expiry, str):
-        return "expiry must be in MM/YY format"
-    match = EXPIRY_RE.match(expiry)
-    if match is None:
-        return "expiry must be in MM/YY format"
-    month, year = int(match.group(1)), 2000 + int(match.group(2))
-    now = datetime.now(timezone.utc)
-    if (year, month) < (now.year, now.month):
-        return "card has expired"
-    return None
-
-
 def parse_time(value) -> datetime | None:
     """ISO 8601 with a timezone, e.g. 2026-09-25T09:00:00+07:00."""
     try:
@@ -98,6 +74,30 @@ def parse_window(args) -> tuple[tuple | None, str | None]:
     if end_time <= start_time:
         return None, "end_time must be after start_time"
     return (start_time, end_time), None
+
+
+CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
+CVC_RE = re.compile(r"^\d{3,4}$")
+EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
+
+
+def validate_card(card_number, expiry, cvc) -> str | None:
+    """Returns an error message, or None if the (mocked) card looks valid -
+    right shape and not expired, not a real Luhn/network check."""
+    if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
+        return "card_number must be 13-19 digits"
+    if not isinstance(cvc, str) or not CVC_RE.match(cvc):
+        return "cvc must be 3 or 4 digits"
+    if not isinstance(expiry, str):
+        return "expiry must be in MM/YY format"
+    match = EXPIRY_RE.match(expiry)
+    if match is None:
+        return "expiry must be in MM/YY format"
+    month, year = int(match.group(1)), 2000 + int(match.group(2))
+    now = datetime.now(timezone.utc)
+    if (year, month) < (now.year, now.month):
+        return "card has expired"
+    return None
 
 
 def booking_to_json(row: dict) -> dict:
@@ -218,26 +218,32 @@ def create_app(
         # is the JSON API.
         return redirect("/app/", code=302)
 
+    def register_user(email, password):
+        """Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
+        with app.db.cursor() as cur:
+            return purchase.member.register_user(cur, email, password)
+
     @app.post("/register")
     def register():
         body = request.get_json(silent=True) or {}
-        with app.db.cursor() as cur:
-            payload, status = purchase.member.register_user(
-                cur, body.get("email"), body.get("password")
-            )
+        payload, status = register_user(body.get("email"), body.get("password"))
         return jsonify(payload), status
+
+    def login_user(email, password):
+        """Returns (payload, status) - {"id": ..., "email": ...}, or an error.
+        Wrong password and unknown email give the identical error, so a
+        failed attempt can't be used to find out which emails are registered."""
+        with app.db.cursor() as cur:
+            payload, status = purchase.member.authenticate(cur, email, password)
+        if status == 200:
+            session["user_id"] = payload["id"]
+        return payload, status
 
     @app.post("/login")
     def login():
         body = request.get_json(silent=True) or {}
-        with app.db.cursor() as cur:
-            payload, status = purchase.member.authenticate(
-                cur, body.get("email"), body.get("password")
-            )
-        if status == 200:
-            session["user_id"] = payload["id"]
+        payload, status = login_user(body.get("email"), body.get("password"))
         return jsonify(payload), status
-
 
     @app.post("/logout")
     def logout():
@@ -336,7 +342,7 @@ def create_app(
         return payload, status
 
     @app.post("/spaces/<int:space_id>/bookings")
-    def create_booking_from_json(space_id):
+    def create_booking(space_id):
         body = request.get_json(silent=True) or {}
         start_time = parse_time(body.get("start_time"))
         end_time = parse_time(body.get("end_time"))
