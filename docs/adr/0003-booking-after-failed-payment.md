@@ -40,8 +40,10 @@ The supplied discussion notes add these integration decisions:
 - The member initiates payment by pressing Pay in Frontend. A payment attempt
   is created and Payments processes it. The request routing and placement of
   Purchase's pre-collection hold check still need an explicit API contract.
-- Paying again after a confirmed failure creates a new payment ID for the same
-  booking. It does not create a new booking or restart the hold.
+- When the member presses Pay again after a confirmed failure, Payments creates
+  a new payment ID for the same booking. Failure alone does not automatically
+  create another attempt. The new Pay action does not create a new booking or
+  restart the hold.
 - Payments calls a Purchase-owned API to notify it of success or failure.
   Purchase implements that API and owns the booking update; Payments does not
   write Purchase's booking rows directly.
@@ -84,7 +86,7 @@ move was verified for this document.
   and error responses, including the booking reference and recorded amount.
 - Place Purchase's hold check before collection in the Frontend-initiated flow.
 - Specify how requests refer to payment IDs and how duplicate requests are
-  identified; a confirmed-failure retry creates a new ID, while unknown/success
+  identified; pressing Pay again after confirmed failure creates a new ID, while unknown/success
   resolution refers to the same operation.
 - Agree acknowledgement and redelivery when notifying Purchase fails, with
   duplicate outcome handling that cannot collect twice or overwrite a newer
@@ -107,7 +109,8 @@ refund implementation is PT-013. The full provider contract is PT-002.
 Review scenarios for the follow-up implementation:
 
 - Failure retains an unpaid booking and its price during the active hold;
-  a new attempt after confirmed failure has a new payment ID for that booking.
+  failure alone creates no new attempt. Pressing Pay again after confirmed
+  failure creates a new payment ID for that booking.
 - Success and failure are notified through Purchase's API, with booking updates
   performed by Purchase rather than Payments.
 - Failed outcome notification does not trigger another collection; duplicate
@@ -124,7 +127,7 @@ requirements, not executed tests or deployment evidence.
 ## Sources
 
 - User-supplied discussion screenshot on 2026-10-06: Frontend initiates payment,
-  retry after failure creates a new payment ID, and Payments notifies Purchase
+  pressing Pay again after failure creates a new payment ID, and Payments notifies Purchase
   through Purchase's API for booking updates, including failure.
 - Purchase confirmation of unpaid, retryable bookings after failed payment,
   relayed by the PT-003 owner on 2026-10-06; no original discussion URL supplied.
