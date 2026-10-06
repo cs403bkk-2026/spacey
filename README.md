@@ -20,7 +20,9 @@ DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey pytest
 DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey flask --app app run --port 5001 --debug
 ```
 
-Open <http://127.0.0.1:5001/>. The health check is at <http://127.0.0.1:5001/health>.
+The health check is at <http://127.0.0.1:5001/health>. This process is the JSON API.
+The browser client is the separate [spacey-frontend](https://github.com/cs403bkk-2026/spacey-frontend)
+app, served at `/app/` on the shared host. `GET /` redirects there.
 
 A few things that trip people up the first time:
 
@@ -41,7 +43,7 @@ setup):
 docker compose up --build
 ```
 
-Then open <http://127.0.0.1:8000/>.
+Then the API is at <http://127.0.0.1:8000/>. `GET /health` reports status, and `GET /` redirects to `/app/`.
 
 ## Configuration
 
@@ -54,6 +56,7 @@ development-only default - but a real deployment should set all of them explicit
 | `APP_REVISION`       | Shown by `GET /health`, so a deployment can confirm which commit is live.     | `local`                                              |
 | `RESET_DB_ON_START`  | If `true`, wipes all tables on startup. Used by tests; never set this in a real deployment or you will delete real data. | `false` |
 | `SECRET_KEY`         | Signs the login session cookie. **Must** be set to a real secret in any deployment - the default is public (it's printed right here in this file), so anyone could forge a session cookie claiming to be any user. The app would still run fine without it set, which is exactly what makes this easy to forget. | `dev-secret-key-not-for-production` |
+| `REPORTING_URL`      | Where `GET /dashboard` redirects (the Grafana report). | `https://grafana.cs403bkk26.space/d/spacey-reporting` |
 
 A missing or unreachable `DATABASE_URL` now fails fast at startup with a short, readable message
 instead of a raw stack trace.
@@ -64,10 +67,15 @@ instead of a raw stack trace.
 2. GitHub Actions installs dependencies and runs the tests.
 3. After review, merge the pull request to `main`.
 4. Once the deployment environment is enabled, GitHub Actions builds the exact merged revision,
-   publishes its container image, and submits the Nomad job.
+  publishes its container image, and submits the Nomad job.
 5. Check the permanent URL and its `/health` response. `revision` must equal the merged commit.
 
 Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Architecture decisions
+
+- [ADR 0001: Move reporting to Grafana](docs/adr/0001-move-reporting-to-grafana.md)
+- [ADR 0002: Separate the browser client](docs/adr/0002-separate-frontend-repository.md)
 
 ## API reference
 
@@ -75,17 +83,8 @@ Every JSON endpoint is documented in detail in [openapi.yaml](openapi.yaml) (Ope
 bodies, response shapes, status codes. Paste its contents into <https://editor.swagger.io> for a
 browsable version, or view it with any OpenAPI tool.
 
-A few routes render an HTML page for a browser instead of JSON, and aren't part of that document:
-
-| Method | Path                              | What it does                                                        |
-|--------|------------------------------------|----------------------------------------------------------------------|
-| GET    | `/`                                 | Space list with a booking form on each; shows login state            |
-| GET    | `/register`, `/login`               | Plain sign-up / log-in forms                                         |
-| POST   | `/spaces/<id>/book`                 | Target of the homepage's booking form                                |
-| GET    | `/bookings/<id>/confirmation`       | Booking details, price, and Pay / Unlock buttons                     |
-| POST   | `/bookings/<id>/confirmation/pay`   | Target of the confirmation page's Pay button                         |
-| POST   | `/bookings/<id>/confirmation/unlock`| Target of the confirmation page's Unlock button                      |
-| GET    | `/dashboard`                        | Business metrics as a page                                           |
+Two routes redirect instead of returning JSON, so they are not in that document:
+`GET /` sends the browser to the frontend at `/app/`, and `GET /dashboard` sends it to Grafana.
 
 Quick summary of the JSON API (see [openapi.yaml](openapi.yaml) for the full detail):
 
@@ -119,7 +118,7 @@ Do not wait for the kickoff meeting.
 4. Merge one small user-visible change and verify its revision at the permanent URL.
 5. Append the first entry to [STARTUP_LOG.md](STARTUP_LOG.md).
 6. Post unresolved blockers in Slack using the format in
-   [CONTRIBUTING.md](CONTRIBUTING.md).
+  [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Keep secrets out of GitHub
 
