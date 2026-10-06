@@ -38,6 +38,21 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     return None
 
 
+def pay_booking(app, booking_id, body):
+    """Pay a booking from the JSON body of POST /bookings/<id>/pay.
+    Returns (payload, status)."""
+    if not isinstance(body, dict):
+        body = {}
+    return mark_booking_paid(
+        app,
+        booking_id,
+        body.get("card_number"),
+        body.get("expiry"),
+        body.get("cvc"),
+        force_failure=body.get("force_failure") is True,
+    )
+
+
 def mark_booking_paid(app, booking_id, card_number, expiry, cvc, force_failure=False):
     """Mocked payment: no provider, so it succeeds unless force_failure
     is set or the card doesn't look valid (see validate_card). Paying an
