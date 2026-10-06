@@ -1,8 +1,15 @@
-"""Purchase rules: booking a space, its price and subscription coverage."""
+"""Booking helpers: pricing, booking a space and finding bookings."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from psycopg.errors import DeadlockDetected, ExclusionViolation
+
+from purchase.member import normalise_member_name, is_subscribed
+
+BOOKING_COLUMNS = (
+    "id, space_id, member, paid, start_time, end_time, "
+    "amount_cents, user_id, card_last4, created_at"
+)
 
 
 def calculate_booking_price_cents(
@@ -17,61 +24,9 @@ def calculate_booking_price_cents(
     return (hourly_rate_cents * seconds + 1800) // 3600
 
 
-def is_valid_capacity(capacity) -> bool:
-    # bool is a subclass of int in Python, so rule out true/false
-    return (
-        isinstance(capacity, int)
-        and not isinstance(capacity, bool)
-        and capacity >= 1
-    )
-
-
-def is_valid_name(name) -> bool:
-    return isinstance(name, str) and name.strip() != ""
-
-
-def is_valid_price(price) -> bool:
-    return isinstance(price, int) and not isinstance(price, bool) and price >= 0
-
-
-def member_key(name: str) -> str:
-    return name.strip().lower()
-
-
-def is_subscribed(cur, member) -> bool:
-    if not isinstance(member, str):
-        return False
-    cur.execute(
-        "SELECT 1 FROM subscriptions WHERE member = %s AND active",
-        (member_key(member),),
-    )
-    return cur.fetchone() is not None
-
-
-def subscribe(cur, name):
-    """Subscribe a member by name. Mocked, like payment: no provider, always
-    succeeds. Subscribing again is a no-op, so a retried request can't break
-    anything. Returns (payload, status)."""
-    member = member_key(name)
-    if not member:
-        return {"error": "member name must not be blank"}, 400
-
-    cur.execute(
-        "INSERT INTO subscriptions (member) VALUES (%s) "
-        "ON CONFLICT (member) DO UPDATE SET active = TRUE "
-        "RETURNING member, active, started_at",
-        (member,),
-    )
-    row = cur.fetchone()
-    return {
-        "member": row["member"],
-        "active": row["active"],
-        "started_at": row["started_at"].astimezone(timezone.utc).isoformat(),
-    }, 200
-
-
-def purchase_booking(cur, space_id, member, start_time, end_time, party_size, user_id):
+def create_booking(cur, space_id, member, start_time, end_time, party_size, user_id):
     """Book a space for a member; user_id is the logged-in account or None.
+    member is the name as sent: trimmed, "guest" if missing or blank.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
     cur.execute(
         "SELECT id, capacity, price_cents FROM spaces WHERE id = %s",
@@ -80,6 +35,10 @@ def purchase_booking(cur, space_id, member, start_time, end_time, party_size, us
     space = cur.fetchone()
     if space is None:
         return {"error": "space not found"}, 404
+
+    member = normalise_member_name(member)
+    if member is None:
+        return {"error": "member must be a string"}, 400
 
     if end_time <= start_time:
         return {"error": "end_time must be after start_time"}, 400
@@ -117,8 +76,7 @@ def purchase_booking(cur, space_id, member, start_time, end_time, party_size, us
             "(space_id, member, paid, start_time, end_time, "
             "amount_cents, user_id) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-            "RETURNING id, space_id, member, paid, start_time, end_time, "
-            "amount_cents, user_id, card_last4, created_at",
+            f"RETURNING {BOOKING_COLUMNS}",
             (
                 space_id,
                 member,
@@ -138,3 +96,45 @@ def purchase_booking(cur, space_id, member, start_time, end_time, party_size, us
         # case; this only fires when two requests raced past it.
         return {"error": "space is already booked for that time"}, 409
     return cur.fetchone(), 201
+
+
+def list_bookings(cur) -> list:
+    cur.execute(f"SELECT {BOOKING_COLUMNS} FROM bookings ORDER BY start_time")
+    return cur.fetchall()
+
+
+def list_space_bookings(cur, space_id) -> list:
+    cur.execute(
+        f"SELECT {BOOKING_COLUMNS} FROM bookings "
+        "WHERE space_id = %s ORDER BY start_time",
+        (space_id,),
+    )
+    return cur.fetchall()
+
+
+def list_user_bookings(cur, user_id) -> list:
+    """Bookings made while logged in as user_id; guest bookings never match."""
+    cur.execute(
+        f"SELECT {BOOKING_COLUMNS} FROM bookings "
+        "WHERE user_id = %s ORDER BY start_time",
+        (user_id,),
+    )
+    return cur.fetchall()
+
+
+def get_booking(cur, booking_id) -> dict | None:
+    cur.execute(
+        f"SELECT {BOOKING_COLUMNS} FROM bookings WHERE id = %s", (booking_id,)
+    )
+    return cur.fetchone()
+
+
+def cancel_booking(cur, booking_id) -> dict | None:
+    """Delete a booking (its access code goes with it); None if not found."""
+    cur.execute(
+        f"DELETE FROM bookings WHERE id = %s RETURNING {BOOKING_COLUMNS}",
+        (booking_id,),
+    )
+    return cur.fetchone()
+
+

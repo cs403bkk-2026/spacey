@@ -5,12 +5,16 @@ from datetime import datetime, timezone
 
 import psycopg
 from flask import Flask, jsonify, redirect, request, session
-from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
-from werkzeug.security import check_password_hash, generate_password_hash
 
 from access import issue_access_code
-from purchase import is_valid_capacity, is_valid_name, is_valid_price, purchase_booking, subscribe
+# Called qualified, since route functions below reuse names like get_space.
+import purchase.booking
+import purchase.member
+import purchase.schema
+import purchase.space
+from purchase.member import subscribe
+from purchase.space import booked_space_ids
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -41,124 +45,7 @@ def get_connection(database_url: str) -> psycopg.Connection:
             "Is Postgres running? Try: docker compose up db -d"
         ) from None
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS spaces (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                capacity INTEGER NOT NULL
-            )
-            """
-        )
-        cur.execute(
-            "ALTER TABLE spaces ADD COLUMN IF NOT EXISTS "
-            "price_cents INTEGER NOT NULL DEFAULT 0"
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS bookings (
-                id SERIAL PRIMARY KEY,
-                space_id INTEGER NOT NULL REFERENCES spaces (id),
-                member TEXT NOT NULL,
-                paid BOOLEAN NOT NULL
-            )
-            """
-        )
-        # Mocked subscriptions, keyed by the trimmed lower-case member name.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS subscriptions (
-                member TEXT PRIMARY KEY,
-                active BOOLEAN NOT NULL DEFAULT TRUE,
-                started_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        # The access code handed out when a booking is unlocked (#171).
-        # One code per booking, kept so a page refresh shows the same code
-        # instead of a new one. ON DELETE CASCADE because cancelling a
-        # booking deletes its row, and the code is worthless without it.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS access (
-                booking_id INTEGER PRIMARY KEY
-                    REFERENCES bookings (id) ON DELETE CASCADE,
-                access_code TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        # First step of #120 (real accounts): just registration for now.
-        # Storing only a hash, never the password itself.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-            """
-        )
-        # Added after the table already existed, so ALTER instead of editing
-        # CREATE TABLE above - existing databases get the new columns too.
-        cur.execute(
-            "ALTER TABLE bookings "
-            "ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ, "
-            "ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ"
-        )
-        # Price charged at booking time, so a later price change can't rewrite past revenue.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount_cents INTEGER"
-        )
-        # Links a booking to the account that was logged in when it was made
-        # (#134, the first concrete step of #86). NULL for a guest booking
-        # made while logged out, and for every booking made before this.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
-            "user_id INTEGER REFERENCES users (id)"
-        )
-        # Last 4 digits only (#119) - never the full card number or CVC.
-        # NULL until the booking is actually paid.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS card_last4 TEXT"
-        )
-        # When the booking was made (not when the space is used), so the
-        # dashboard can show growth over time. Bookings made before this
-        # column existed get the time the column was added - the best we
-        # have, and it keeps the column NOT NULL.
-        cur.execute(
-            "ALTER TABLE bookings ADD COLUMN IF NOT EXISTS "
-            "created_at TIMESTAMPTZ NOT NULL DEFAULT now()"
-        )
-        # Bookings from before that column existed get the space's current price (best we have).
-        cur.execute(
-            "UPDATE bookings SET amount_cents = s.price_cents "
-            "FROM spaces s "
-            "WHERE s.id = bookings.space_id AND bookings.amount_cents IS NULL"
-        )
-        # Belt-and-suspenders against double-booking: the app already checks
-        # for overlaps before inserting, but that check-then-insert isn't
-        # atomic, so two simultaneous requests could both pass the check.
-        # This constraint makes Postgres itself reject the second insert.
-        cur.execute("CREATE EXTENSION IF NOT EXISTS btree_gist")
-        cur.execute(
-            """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint WHERE conname = 'no_overlapping_bookings'
-                ) THEN
-                    ALTER TABLE bookings
-                    ADD CONSTRAINT no_overlapping_bookings
-                    EXCLUDE USING gist (
-                        space_id WITH =,
-                        tstzrange(start_time, end_time) WITH &&
-                    );
-                END IF;
-            END $$;
-            """
-        )
+        purchase.schema.create_tables(cur)
     return conn
 
 
@@ -187,36 +74,6 @@ def parse_window(args) -> tuple[tuple | None, str | None]:
     if end_time <= start_time:
         return None, "end_time must be after start_time"
     return (start_time, end_time), None
-
-
-def booked_space_ids(cur, window) -> set:
-    """Spaces booked during the window, or booked right now if no window."""
-    if window is None:
-        cur.execute(
-            "SELECT DISTINCT space_id FROM bookings "
-            "WHERE start_time <= now() AND end_time > now()"
-        )
-    else:
-        start_time, end_time = window
-        # Same overlap rule as booking creation: back-to-back is not a clash.
-        cur.execute(
-            "SELECT DISTINCT space_id FROM bookings "
-            "WHERE start_time < %s AND end_time > %s",
-            (end_time, start_time),
-        )
-    return {row["space_id"] for row in cur.fetchall()}
-
-
-# Deliberately simple: good enough to catch a typo, not full RFC 5322.
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def is_valid_email(email) -> bool:
-    return isinstance(email, str) and EMAIL_RE.match(email.strip()) is not None
-
-
-def is_valid_password(password) -> bool:
-    return isinstance(password, str) and len(password) >= 8
 
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
@@ -340,17 +197,6 @@ def reset_tables(conn: psycopg.Connection) -> None:
         )
 
 
-def seed_starter_space(conn: psycopg.Connection) -> None:
-    with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS count FROM spaces")
-        if cur.fetchone()["count"] == 0:
-            cur.execute(
-                "INSERT INTO spaces (name, capacity, price_cents) "
-                "VALUES (%s, %s, %s)",
-                ("Founders Desk", 1, 2500),  # $25.00 per hour
-            )
-
-
 def create_app(
     database_url: str = DATABASE_URL, reset_on_start: bool | None = None
 ) -> Flask:
@@ -363,7 +209,8 @@ def create_app(
     app.db = get_connection(database_url)
     if reset_on_start:
         reset_tables(app.db)
-    seed_starter_space(app.db)
+    with app.db.cursor() as cur:
+        purchase.space.seed_starter_space(cur)
 
     @app.get("/")
     def index():
@@ -373,26 +220,8 @@ def create_app(
 
     def register_user(email, password):
         """Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
-        if not is_valid_email(email):
-            return {"error": "enter a valid email address"}, 400
-        if not is_valid_password(password):
-            return {"error": "password must be at least 8 characters"}, 400
-
-        email = email.strip().lower()
-        password_hash = generate_password_hash(password)
-
         with app.db.cursor() as cur:
-            try:
-                cur.execute(
-                    "INSERT INTO users (email, password_hash) VALUES (%s, %s) "
-                    "RETURNING id, email",
-                    (email, password_hash),
-                )
-            except UniqueViolation:
-                return {"error": "email is already registered"}, 409
-            user = cur.fetchone()
-
-        return user, 201
+            return purchase.member.register_user(cur, email, password)
 
     @app.post("/register")
     def register():
@@ -404,22 +233,11 @@ def create_app(
         """Returns (payload, status) - {"id": ..., "email": ...}, or an error.
         Wrong password and unknown email give the identical error, so a
         failed attempt can't be used to find out which emails are registered."""
-        invalid = {"error": "invalid email or password"}, 401
-        if not isinstance(email, str) or not isinstance(password, str):
-            return invalid
-
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, email, password_hash FROM users WHERE email = %s",
-                (email.strip().lower(),),
-            )
-            user = cur.fetchone()
-
-        if user is None or not check_password_hash(user["password_hash"], password):
-            return invalid
-
-        session["user_id"] = user["id"]
-        return {"id": user["id"], "email": user["email"]}, 200
+            payload, status = purchase.member.authenticate(cur, email, password)
+        if status == 200:
+            session["user_id"] = payload["id"]
+        return payload, status
 
     @app.post("/login")
     def login():
@@ -453,8 +271,7 @@ def create_app(
             return jsonify(error=error), 400
 
         with app.db.cursor() as cur:
-            cur.execute("SELECT id, name, capacity, price_cents FROM spaces")
-            rows = cur.fetchall()
+            rows = purchase.space.list_spaces(cur)
             booked_ids = booked_space_ids(cur, window)
 
         spaces = [
@@ -465,33 +282,12 @@ def create_app(
     @app.post("/spaces")
     def create_space():
         body = request.get_json(silent=True) or {}
-        name = body.get("name")
-        capacity = body.get("capacity")
-        price_cents = body.get("price_cents", 0)
-
-        if name is None or capacity is None:
-            return jsonify(error="name and capacity are required"), 400
-        if not is_valid_name(name):
-            return jsonify(error="name must not be empty"), 400
-        if not is_valid_capacity(capacity):
-            return jsonify(
-                error="capacity must be a whole number of at least 1"
-            ), 400
-        name = name.strip()
-        if not is_valid_price(price_cents):
-            return jsonify(
-                error="price_cents must be a non-negative integer"
-            ), 400
-
         with app.db.cursor() as cur:
-            cur.execute(
-                "INSERT INTO spaces (name, capacity, price_cents) VALUES (%s, %s, %s) "
-                "RETURNING id",
-                (name, capacity, price_cents),
+            payload, status = purchase.space.create_space(
+                cur, body.get("name"), body.get("capacity"),
+                body.get("price_cents", 0),
             )
-            new_id = cur.fetchone()["id"]
-
-        return jsonify(id=new_id, name=name, capacity=capacity, price_cents=price_cents), 201
+        return jsonify(payload), status
 
     @app.get("/spaces/<int:space_id>")
     def get_space(space_id):
@@ -500,11 +296,7 @@ def create_app(
             return jsonify(error=error), 400
 
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, name, capacity, price_cents FROM spaces WHERE id = %s",
-                (space_id,),
-            )
-            space = cur.fetchone()
+            space = purchase.space.get_space(cur, space_id)
             if space is None:
                 return jsonify(error="space not found"), 404
 
@@ -515,80 +307,25 @@ def create_app(
     @app.patch("/spaces/<int:space_id>")
     def update_space(space_id):
         body = request.get_json(silent=True) or {}
-        if not any(field in body for field in ("name", "capacity", "price_cents")):
-            return jsonify(
-                error="provide name, capacity and/or price_cents to update"
-            ), 400
-
         with app.db.cursor() as cur:
-            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
-            if cur.fetchone() is None:
-                return jsonify(error="space not found"), 404
-
-            name = body.get("name")
-            capacity = body.get("capacity")
-            price_cents = body.get("price_cents")
-            if "name" in body and not is_valid_name(name):
-                return jsonify(error="name must not be empty"), 400
-            if "capacity" in body and not is_valid_capacity(capacity):
-                return jsonify(
-                    error="capacity must be a whole number of at least 1"
-                ), 400
-            if "price_cents" in body and not is_valid_price(price_cents):
-                return jsonify(
-                    error="price_cents must be a non-negative integer"
-                ), 400
-            if name is not None:
-                name = name.strip()
-
-            # COALESCE keeps the current value for fields not in the request
-            cur.execute(
-                "UPDATE spaces "
-                "SET name = COALESCE(%s, name), "
-                "capacity = COALESCE(%s, capacity), "
-                "price_cents = COALESCE(%s, price_cents) "
-                "WHERE id = %s "
-                "RETURNING id, name, capacity, price_cents",
-                (name, capacity, price_cents, space_id),
-            )
-            space = cur.fetchone()
-
-        return jsonify(space)
+            payload, status = purchase.space.update_space(cur, space_id, body)
+        return jsonify(payload), status
 
     @app.delete("/spaces/<int:space_id>")
     def delete_space(space_id):
         with app.db.cursor() as cur:
-            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
-            space = cur.fetchone()
-            if space is None:
-                return jsonify(error="space not found"), 404
-
-            cur.execute(
-                "SELECT id FROM bookings WHERE space_id = %s LIMIT 1",
-                (space_id,),
-            )
-            if cur.fetchone() is not None:
-                return jsonify(
-                    error="space has bookings, cancel them first"
-                ), 409
-
-            cur.execute("DELETE FROM spaces WHERE id = %s", (space_id,))
-
-        return "", 204
+            payload, status = purchase.space.delete_space(cur, space_id)
+        if payload is None:
+            return "", status
+        return jsonify(payload), status
 
     @app.get("/spaces/<int:space_id>/bookings")
     def list_space_bookings(space_id):
         with app.db.cursor() as cur:
-            cur.execute("SELECT id FROM spaces WHERE id = %s", (space_id,))
-            if cur.fetchone() is None:
+            if purchase.space.get_space(cur, space_id) is None:
                 return jsonify(error="space not found"), 404
 
-            cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
-                "FROM bookings WHERE space_id = %s ORDER BY start_time",
-                (space_id,),
-            )
-            rows = cur.fetchall()
+            rows = purchase.booking.list_space_bookings(cur, space_id)
 
         return jsonify(bookings=[booking_to_json(row) for row in rows])
 
@@ -596,7 +333,7 @@ def create_app(
         """Returns (payload, status) - the booking, or an {"error": ...}."""
         with app.db.cursor() as cur:
             # Linked to the account if one is logged in; NULL for a guest.
-            payload, status = purchase_booking(
+            payload, status = purchase.booking.create_booking(
                 cur, space_id, member, start_time, end_time, party_size,
                 session.get("user_id"),
             )
@@ -618,7 +355,7 @@ def create_app(
 
         payload, status = book_space(
             space_id,
-            body.get("member") or "guest",
+            body.get("member"),
             start_time,
             end_time,
             body.get("party_size", 1),
@@ -628,23 +365,27 @@ def create_app(
     @app.get("/bookings")
     def list_bookings():
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
-                "FROM bookings ORDER BY start_time"
-            )
-            rows = cur.fetchall()
+            rows = purchase.booking.list_bookings(cur)
+
+        return jsonify(bookings=[booking_to_json(row) for row in rows])
+
+    @app.get("/me/bookings")
+    def list_my_bookings():
+        """The logged-in account's bookings, so the client never has to
+        fetch everyone's and filter them itself."""
+        user_id = session.get("user_id")
+        if user_id is None:
+            return jsonify(error="log in to see your bookings"), 401
+
+        with app.db.cursor() as cur:
+            rows = purchase.booking.list_user_bookings(cur, user_id)
 
         return jsonify(bookings=[booking_to_json(row) for row in rows])
 
     @app.get("/bookings/<int:booking_id>")
     def find_booking(booking_id):
         with app.db.cursor() as cur:
-            cur.execute(
-                "SELECT id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at "
-                "FROM bookings WHERE id = %s",
-                (booking_id,),
-            )
-            row = cur.fetchone()
+            row = purchase.booking.get_booking(cur, booking_id)
 
         if row is None:
             return jsonify(error="booking not found"), 404
@@ -654,12 +395,7 @@ def create_app(
     @app.delete("/bookings/<int:booking_id>")
     def cancel_booking(booking_id):
         with app.db.cursor() as cur:
-            cur.execute(
-                "DELETE FROM bookings WHERE id = %s "
-                "RETURNING id, space_id, member, paid, start_time, end_time, amount_cents, user_id, card_last4, created_at",
-                (booking_id,),
-            )
-            row = cur.fetchone()
+            row = purchase.booking.cancel_booking(cur, booking_id)
 
         if row is None:
             return jsonify(error="booking not found"), 404

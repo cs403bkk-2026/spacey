@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from purchase import calculate_booking_price_cents
+from purchase.booking import calculate_booking_price_cents
+from purchase.member import is_valid_email, is_valid_password
 
 
 @pytest.mark.parametrize(
@@ -22,3 +23,33 @@ def test_booking_price_examples(hourly_rate_cents, seconds, expected_cents):
     assert calculate_booking_price_cents(
         hourly_rate_cents, start, start + timedelta(seconds=seconds)
     ) == expected_cents
+
+
+@pytest.mark.parametrize(
+    "email,expected",
+    [
+        ("member@example.com", True),
+        ("  member@example.com  ", True),
+        ("member@example", False),
+        ("member example@example.com", False),
+        ("", False),
+        (None, False),
+        (42, False),
+    ],
+)
+def test_email_validation_examples(email, expected):
+    assert is_valid_email(email) is expected
+
+
+@pytest.mark.parametrize(
+    "password,expected",
+    [
+        ("12345678", True),
+        ("1234567", False),
+        ("", False),
+        (None, False),
+        (12345678, False),
+    ],
+)
+def test_password_validation_examples(password, expected):
+    assert is_valid_password(password) is expected

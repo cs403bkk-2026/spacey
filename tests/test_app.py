@@ -884,6 +884,55 @@ def test_user_id_stays_on_the_booking_through_pay_and_list():
         == user["id"]
     )
 
+def test_my_bookings_json_needs_a_login():
+    client = make_client()
+
+    response = client.get("/me/bookings")
+
+    assert response.status_code == 401
+    assert response.get_json() == {"error": "log in to see your bookings"}
+
+def test_my_bookings_json_lists_only_the_logged_in_users_bookings():
+    client = make_client()
+    client.post("/spaces/1/bookings", json={"member": "guest", **slot(1, 2)})
+    register(client, email="annabel@example.com")
+    register(client, email="gregory@example.com")
+
+    login(client, email="annabel@example.com")
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(3, 4)})
+    client.post("/logout", json={})
+
+    login(client, email="gregory@example.com")
+    mine = client.post(
+        "/spaces/1/bookings", json={"member": "gregory", **slot(5, 6)}
+    ).get_json()
+
+    response = client.get("/me/bookings")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"bookings": [mine]}
+
+def test_booking_member_is_trimmed_and_blank_means_guest():
+    client = make_client()
+
+    trimmed = client.post(
+        "/spaces/1/bookings", json={"member": "  member b ", **slot(1, 2)}
+    ).get_json()
+    blank = client.post(
+        "/spaces/1/bookings", json={"member": "   ", **slot(3, 4)}
+    ).get_json()
+
+    assert trimmed["member"] == "member b"
+    assert blank["member"] == "guest"
+
+def test_booking_member_must_be_a_string():
+    client = make_client()
+
+    response = client.post("/spaces/1/bookings", json={"member": 5, **slot(1, 2)})
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "member must be a string"}
+
 def test_subscribing_returns_an_active_subscription():
     client = make_client()
 
