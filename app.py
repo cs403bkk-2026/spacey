@@ -9,6 +9,7 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation, UniqueViolation
 from psycopg.rows import dict_row
 from werkzeug.security import check_password_hash, generate_password_hash
 from payment.api import payment_bp
+from payment.migrations import run_migrations
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://spacey:spacey@localhost:5432/spacey"
@@ -114,6 +115,8 @@ def get_connection(database_url: str) -> psycopg.Connection:
             "FROM spaces s "
             "WHERE s.id = bookings.space_id AND bookings.amount_cents IS NULL"
         )
+        # PT-016: separate payments table (enum status and currency).
+        run_migrations(conn)
         # Belt-and-suspenders against double-booking: the app already checks
         # for overlaps before inserting, but that check-then-insert isn't
         # atomic, so two simultaneous requests could both pass the check.
@@ -344,7 +347,7 @@ def reset_tables(conn: psycopg.Connection) -> None:
     deployment's data survives an app restart."""
     with conn.cursor() as cur:
         cur.execute(
-            "TRUNCATE bookings, spaces, subscriptions, users "
+            "TRUNCATE bookings, spaces, subscriptions, users, payments "
             "RESTART IDENTITY CASCADE"
         )
 
