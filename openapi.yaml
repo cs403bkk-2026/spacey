@@ -339,8 +339,9 @@ paths:
       summary: Pay for a booking (mocked).
       description: >
         No real payment provider or network - card details are checked for
-        shape only (right length, digits only, expiry not in the past),
-        not a real Luhn/network check (see issue #119). Only the card's
+        shape (right length, digits only, expiry not in the past) and the
+        card number must pass the Luhn checksum. There is no network check,
+        so a number that passes may still not be a real card. Only the card's
         last 4 digits are ever stored or returned; the full number and CVC
         are never persisted. Paying an already-paid booking is a no-op
         (no card required for that retry), so a retried request can't
@@ -380,7 +381,8 @@ paths:
               schema: { $ref: "#/components/schemas/Booking" }
         "400":
           description: >
-            `card_number must be 13-19 digits`, `cvc must be 3 or 4
+            `card_number must be 13-19 digits`, `card_number is not a
+            valid card number` (fails the Luhn check), `cvc must be 3 or 4
             digits`, `expiry must be in MM/YY format`, or `card has
             expired`. Not returned when the booking is already paid.
           content:

@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py access.py gunicorn.conf.py ./
 COPY purchase/ purchase/
+COPY payment/ payment/
 
 EXPOSE 8000
 

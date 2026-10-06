@@ -523,6 +523,37 @@ def test_paying_with_a_badly_formatted_card_is_rejected():
 
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
+def test_paying_with_a_card_that_fails_the_luhn_check_is_rejected():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    # 4242424242424242 is valid; changing the last digit breaks the checksum
+    response = client.post(
+        f"/bookings/{created['id']}/pay",
+        json={**VALID_CARD, "card_number": "4242424242424241"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "card_number is not a valid card number"}
+    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
+
+def test_paying_with_other_luhn_valid_cards_succeeds():
+    client = make_client()
+    # Standard test numbers: Visa 16, Amex 15, a 13-digit and a 19-digit number
+    for number in ["4111111111111111", "378282246310005", "4222222222222", "6011000000000000001"]:
+        created = client.post(
+            "/spaces/1/bookings", json={"member": "annabel", **slot(10 * len(number), 10 * len(number) + 1)}
+        ).get_json()
+
+        response = client.post(
+            f"/bookings/{created['id']}/pay", json={**VALID_CARD, "card_number": number}
+        )
+
+        assert response.status_code == 200, number
+        assert response.get_json()["card_last4"] == number[-4:]
+
 def test_paying_with_an_expired_card_is_rejected():
     client = make_client()
     created = client.post(
@@ -1629,3 +1660,32 @@ def test_reporting_url_can_be_configured(monkeypatch):
     client = make_client()
 
     assert client.get("/dashboard").headers["Location"] == "https://example.test/report"
+
+
+# --- PT-016: payments table ---
+
+def test_payments_migration_can_run_twice():
+    from payment.migrations import run_migrations
+    app = create_app(reset_on_start=True)
+    run_migrations(app.db)
+    run_migrations(app.db)
+
+def test_payment_is_inserted_and_fetched_by_booking():
+    from payment.repository import get_payments_for_booking, insert_payment
+    app = create_app(reset_on_start=True)
+    row = insert_payment(app.db, 7, 2500, "success", card_last4="4242")
+    assert row["id"] == 1 and row["currency"] == "USD" and row["status"] == "success"
+    insert_payment(app.db, 8, 1000, "failed", reason="declined")
+    found = get_payments_for_booking(app.db, 7)
+    assert [p["id"] for p in found] == [1]
+    assert found[0]["card_last4"] == "4242"
+    assert "card_number" not in found[0] and "cvc" not in found[0]
+
+def test_payments_reject_values_outside_the_enums():
+    import psycopg
+    from payment.repository import insert_payment
+    app = create_app(reset_on_start=True)
+    with pytest.raises(psycopg.errors.InvalidTextRepresentation):
+        insert_payment(app.db, 1, 100, "refunded")
+    with pytest.raises(psycopg.errors.InvalidTextRepresentation):
+        insert_payment(app.db, 1, 100, "success", currency="EUR")
