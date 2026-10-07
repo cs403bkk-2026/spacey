@@ -1,23 +1,13 @@
-"""Payment business rules: card validation and the (mocked) payment flow.
-No Flask and no SQL - HTTP lives in api.py, the database in repository.py."""
+"""Payment business rules: card validation and the (mocked) payment decision.
+No Flask, no SQL and no bookings - HTTP lives in api.py, the database in
+repository.py, and purchase.booking owns a booking's paid state."""
 
 import re
 from datetime import datetime, timezone
 
-from payment import repository
-
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
 EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
-
-
-def booking_to_json(row: dict) -> dict:
-    return {
-        **row,
-        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
-        "end_time":   row["end_time"].astimezone(timezone.utc).isoformat(),
-        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
-    }
 
 
 def passes_luhn(card_number: str) -> bool:
@@ -56,41 +46,14 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     return None
 
 
-def pay_booking(db, booking_id, body):
-    """Pay a booking from the JSON body of POST /bookings/<id>/pay.
-    Returns (payload, status)."""
-    if not isinstance(body, dict):
-        body = {}
-    return mark_booking_paid(
-        db,
-        booking_id,
-        body.get("card_number"),
-        body.get("expiry"),
-        body.get("cvc"),
-        force_failure=body.get("force_failure") is True,
-    )
-
-
-def mark_booking_paid(db, booking_id, card_number, expiry, cvc, force_failure=False):
-    """Mocked payment: no provider, so it succeeds unless force_failure
-    is set or the card doesn't look valid (see validate_card). Paying an
-    already-paid booking is a no-op rather than an error, so a retried
-    request can't break the flow or charge twice - and doesn't need a
-    card either. Only the card's last 4 digits are ever stored.
-    Returns (payload, status) - the booking, or an {"error": ...}."""
-    row = repository.get_booking(db, booking_id)
-    if row is None:
-        return {"error": "booking not found"}, 404
-
-    if row["paid"]:
-        return booking_to_json(row), 200
-
+def authorize_card(card_number, expiry, cvc, force_failure=False):
+    """The (mocked) payment decision for one card, knowing nothing about
+    bookings. Returns None if the card is accepted, otherwise (payload,
+    status): 400 if it doesn't look valid (see validate_card), 402 if
+    force_failure asks this attempt to fail."""
     card_error = validate_card(card_number, expiry, cvc)
     if card_error:
         return {"error": card_error}, 400
-
     if force_failure:
         return {"error": "payment failed"}, 402
-
-    row = repository.mark_paid(db, booking_id, card_number[-4:])
-    return booking_to_json(row), 200
+    return None
