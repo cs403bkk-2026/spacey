@@ -8,14 +8,14 @@ from unittest.mock import MagicMock
 
 from psycopg import OperationalError
 
-from log import logger
+from shared.logger import logger
 from purchase.booking import mark_booking_paid
 
 
 class PaymentLoggingTest(unittest.TestCase):
     def test_logging_works_without_app_configuration(self):
         code = (
-            "from log import logger; "
+            "from shared.logger import logger; "
             "logger.debug('payment booking_id=7 outcome=started'); "
             "logger.info('payment booking_id=7 outcome=succeeded')"
         )

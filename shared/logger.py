@@ -1,5 +1,5 @@
 """The app's single logger. Every service imports this one instance:
-    from log import logger
+    from shared.logger import logger
 Level comes from LOG_LEVEL (default INFO); output goes to stderr."""
 
 import logging
