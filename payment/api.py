@@ -1,5 +1,6 @@
 """HTTP routes for payments. Parses the request, calls services.py, and
 shapes the response - no business rules or SQL here."""
+from typing import Any
 
 from flask import Blueprint, current_app, jsonify, redirect, request, url_for
 
@@ -11,13 +12,15 @@ payment_bp = Blueprint("payment", __name__)
 
 @payment_bp.post("/bookings/<int:booking_id>/pay")
 def pay_booking(booking_id):
-    if (card := Card.from_body(request.get_json(silent=True) or {})) is None:
+    body: dict[str, Any] = request.get_json(silent=True) or {}
+    if (card := Card.from_body(body)) is None:
         return dict(error="Couldn't extract card info"), 400
 
     payload, status = services.mark_booking_paid(
         current_app.db,
         booking_id,
-        card
+        card,
+        force_failure=body.get("force_failure", False)
     )
     return jsonify(payload), status
 
@@ -34,7 +37,8 @@ def pay_from_confirmation(booking_id):
     payload, status = services.mark_booking_paid(
         current_app.db,
         booking_id,
-        card
+        card,
+        force_failure=request.form.get("force_failure", False)
     )
     if status >= 400:
         return redirect(url_for(
