@@ -1,10 +1,21 @@
 """Payment business rules: card validation and the (mocked) payment flow.
 No Flask and no SQL - HTTP lives in api.py, the database in repository.py."""
 
+import logging
+import os
 import re
 from datetime import datetime, timezone
 
+from psycopg import Error as DatabaseError
+
 from payment import repository
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+logger.addHandler(handler)
+logger.propagate = False
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
@@ -78,19 +89,30 @@ def mark_booking_paid(db, booking_id, card_number, expiry, cvc, force_failure=Fa
     request can't break the flow or charge twice - and doesn't need a
     card either. Only the card's last 4 digits are ever stored.
     Returns (payload, status) - the booking, or an {"error": ...}."""
-    row = repository.get_booking(db, booking_id)
-    if row is None:
-        return {"error": "booking not found"}, 404
+    logger.debug("payment booking_id=%s outcome=started", booking_id)
+    try:
+        row = repository.get_booking(db, booking_id)
+        if row is None:
+            logger.warning("payment booking_id=%s outcome=not_found", booking_id)
+            return {"error": "booking not found"}, 404
 
-    if row["paid"]:
+        if row["paid"]:
+            logger.info("payment booking_id=%s outcome=already_paid", booking_id)
+            return booking_to_json(row), 200
+
+        card_error = validate_card(card_number, expiry, cvc)
+        if card_error:
+            logger.warning("payment booking_id=%s outcome=invalid_card", booking_id)
+            return {"error": card_error}, 400
+
+        if force_failure:
+            logger.warning("payment booking_id=%s outcome=failed", booking_id)
+            return {"error": "payment failed"}, 402
+
+        row = repository.mark_paid(db, booking_id, card_number[-4:])
+        logger.info("payment booking_id=%s outcome=succeeded", booking_id)
         return booking_to_json(row), 200
-
-    card_error = validate_card(card_number, expiry, cvc)
-    if card_error:
-        return {"error": card_error}, 400
-
-    if force_failure:
-        return {"error": "payment failed"}, 402
-
-    row = repository.mark_paid(db, booking_id, card_number[-4:])
-    return booking_to_json(row), 200
+    except DatabaseError:
+        # Database diagnostics may include SQL parameters; never log the exception.
+        logger.error("payment booking_id=%s outcome=database_error", booking_id)
+        return {"error": "payment unavailable"}, 500
