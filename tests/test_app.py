@@ -497,7 +497,7 @@ def test_paying_with_a_missing_card_field_is_rejected_and_leaves_it_unpaid():
         response = client.post(f"/bookings/{created['id']}/pay", json=card)
 
         assert response.status_code == 400
-        assert "must" in response.get_json()["error"] or "format" in response.get_json()["error"]
+        assert response.get_json()["error"] == "Couldn't extract card info"
 
     assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
 
