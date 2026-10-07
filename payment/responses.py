@@ -1,7 +1,5 @@
 """JSON responses for the payment routes."""
 
-from datetime import timezone
-
 from flask import jsonify
 
 _TITLES = {
@@ -9,15 +7,6 @@ _TITLES = {
     402: "Payment Required",
     404: "Not Found",
 }
-
-
-def booking_to_json(row: dict) -> dict:
-    return {
-        **row,
-        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
-        "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
-        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
-    }
 
 
 def error_body(
@@ -37,7 +26,8 @@ def error_body(
 
 
 def json_response(payload: dict, status: int, instance: str):
-    if status < 400:
+    if status < 400 or "code" not in payload:
+        # success, or an unstructured error such as the 500 "payment unavailable"
         return jsonify(payload), status
 
     body = {

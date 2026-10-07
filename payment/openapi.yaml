@@ -137,6 +137,18 @@ paths:
                 detail: booking not found
                 instance: /bookings/999/pay
                 code: booking_not_found
+        "500":
+          description: >
+            Database failure during payment. Check the booking's status
+            before retrying. This body is not RFC 9457 problem+json.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                required: [error]
+              example: { error: payment unavailable }
 
   /bookings/{bookingId}/confirmation/pay:
     post:
