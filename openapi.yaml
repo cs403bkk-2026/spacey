@@ -396,6 +396,12 @@ paths:
               example: { error: payment failed }
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "500":
+          description: Database failure during payment; check booking status before retrying.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: payment unavailable }
 
   /bookings/{bookingId}/unlock:
     post:

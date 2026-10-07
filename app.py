@@ -1,6 +1,6 @@
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime
 
 import psycopg
 from flask import Flask, jsonify, redirect, request, session
@@ -13,6 +13,8 @@ import purchase.booking
 import purchase.member
 import purchase.schema
 import purchase.space
+from purchase.api import booking_bp
+from purchase.booking import booking_to_json
 from purchase.member import subscribe
 from purchase.space import booked_space_ids
 
@@ -76,15 +78,6 @@ def parse_window(args) -> tuple[tuple | None, str | None]:
     if end_time <= start_time:
         return None, "end_time must be after start_time"
     return (start_time, end_time), None
-
-
-def booking_to_json(row: dict) -> dict:
-    return {
-        **row,
-        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
-        "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
-        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
-    }
 
 
 def compute_metrics(cur) -> dict:
@@ -185,6 +178,7 @@ def create_app(
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
     app.db = get_connection(database_url)
+    app.register_blueprint(booking_bp)
     if reset_on_start:
         reset_tables(app.db)
     with app.db.cursor() as cur:
@@ -379,18 +373,6 @@ def create_app(
             return jsonify(error="booking not found"), 404
 
         return jsonify(booking_to_json(row))
-
-    @app.post("/bookings/<int:booking_id>/pay")
-    def pay_booking(booking_id):
-        try:
-            with app.db.transaction(), app.db.cursor() as cur:
-                payload, status = purchase.booking.pay_booking(
-                    cur, booking_id, request.get_json(silent=True))
-        except psycopg.Error:
-            return jsonify(error="payment unavailable"), 500
-        if status == 200:
-            payload = booking_to_json(payload)
-        return jsonify(payload), status
 
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):

@@ -1,5 +1,6 @@
-"""Payment business rules: card validation and the (mocked) payment flow.
-No Flask and no SQL - HTTP lives in api.py, the database in repository.py."""
+"""Payment business rules: card validation and the (mocked) payment decision.
+No Flask or SQL. HTTP lives in api.py, the database in repository.py,
+and purchase.booking owns a booking's paid state."""
 
 import re
 from datetime import datetime, timezone
@@ -65,15 +66,25 @@ def process_payment(booking_id, card_number, expiry, cvc, force_failure=False):
     The booking owner handles existence checks, retries and applying success.
     Nothing is persisted; only the card's last four digits are returned.
     """
-    card_error = validate_card(card_number, expiry, cvc)
-    if card_error:
-        return {"error": card_error}, 400
-
-    if force_failure:
-        return {"error": "payment failed"}, 402
+    rejected = authorize_card(card_number, expiry, cvc, force_failure)
+    if rejected:
+        return rejected
 
     return {
         "booking_id": booking_id,
         "status": "success",
         "card_last4": card_number[-4:],
     }, 200
+
+
+def authorize_card(card_number, expiry, cvc, force_failure=False):
+    """The (mocked) payment decision for one card, knowing nothing about
+    bookings. Returns None if the card is accepted, otherwise (payload,
+    status): 400 if it doesn't look valid (see validate_card), 402 if
+    force_failure asks this attempt to fail."""
+    card_error = validate_card(card_number, expiry, cvc)
+    if card_error:
+        return {"error": card_error}, 400
+    if force_failure:
+        return {"error": "payment failed"}, 402
+    return None
