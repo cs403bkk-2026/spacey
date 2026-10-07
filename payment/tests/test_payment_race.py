@@ -6,7 +6,7 @@ from threading import Barrier, Lock
 
 import pytest
 
-from payment import services
+from purchase import booking as booking_module
 
 
 @pytest.mark.parametrize(
@@ -53,8 +53,8 @@ def test_same_booking_reaches_mark_paid_once(monkeypatch, concurrent):
             booking.update(paid=True, card_last4=last4)
             return booking.copy()
 
-    monkeypatch.setattr(services.repository, "get_booking", get_booking)
-    monkeypatch.setattr(services.repository, "mark_paid", mark_paid)
+    monkeypatch.setattr(booking_module, "get_booking", get_booking)
+    monkeypatch.setattr(booking_module, "mark_paid", mark_paid)
 
     card = {
         "card_number": "4242424242424242",
@@ -63,7 +63,9 @@ def test_same_booking_reaches_mark_paid_once(monkeypatch, concurrent):
     }
 
     def pay():
-        return services.pay_booking(None, 1, card)
+        return booking_module.mark_booking_paid(
+            None, 1, card["card_number"], card["expiry"], card["cvc"]
+        )
 
     if concurrent:
         with ThreadPoolExecutor(max_workers=2) as pool:
