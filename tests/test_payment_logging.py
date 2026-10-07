@@ -3,12 +3,10 @@ import os
 import subprocess
 import sys
 import unittest
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from flask import Flask
 
-from psycopg import OperationalError
-
-from payment.services import logger, mark_booking_paid, pay_booking
+from payment.api import payment_bp
+from payment.services import logger, pay_booking, process_payment
 
 
 class PaymentLoggingTest(unittest.TestCase):
@@ -33,31 +31,20 @@ class PaymentLoggingTest(unittest.TestCase):
                 self.assertEqual(result.stderr, expected)
 
     def test_outcomes_exclude_card_data(self):
-        now = datetime.now(timezone.utc)
-        row = dict(id=7, paid=False, start_time=now, end_time=now,
-                   created_at=now, card_last4=None)
         card = dict(card_number="4111111111111111", expiry="12/99", cvc="987")
-        for route in ("json", "form"):
-            for outcome, status in (("not_found", 404), ("already_paid", 200),
-                                    ("invalid_card", 400), ("failed", 402),
+        for entry in ("json", "direct"):
+            for outcome, status in (("invalid_card", 400), ("failed", 402),
                                     ("succeeded", 200)):
-                with self.subTest(route=route, outcome=outcome):
-                    db = MagicMock()
-                    cur = db.cursor.return_value.__enter__.return_value
-                    cur.fetchone.side_effect = [
-                        None if outcome == "not_found" else
-                        {**row, "paid": outcome == "already_paid"},
-                        {**row, "paid": True, "card_last4": "1111"},
-                    ]
+                with self.subTest(entry=entry, outcome=outcome):
                     body = {**card, "force_failure": outcome == "failed"}
                     if outcome == "invalid_card":
                         body["card_number"] = "sensitive-invalid-card"
                     with self.assertLogs(logger, level="DEBUG") as logs:
-                        if route == "json":
-                            _, actual_status = pay_booking(db, 7, body)
+                        if entry == "json":
+                            payload, actual_status = pay_booking(7, body)
                         else:
-                            _, actual_status = mark_booking_paid(
-                                db, 7, body["card_number"], body["expiry"],
+                            payload, actual_status = process_payment(
+                                7, body["card_number"], body["expiry"],
                                 body["cvc"], body["force_failure"])
                     self.assertEqual(actual_status, status)
                     self.assertEqual(len(logs.records), 2)
@@ -70,28 +57,65 @@ class PaymentLoggingTest(unittest.TestCase):
                                      f"payment booking_id=7 outcome={outcome}")
                     for value in (*card.values(), "1111", "sensitive-invalid-card"):
                         self.assertNotIn(value, "\n".join(logs.output))
+                    for value in (*card.values(), "sensitive-invalid-card"):
+                        self.assertNotIn(value, str(payload))
+                    if status == 200:
+                        self.assertEqual(payload, {
+                            "booking_id": 7, "status": "success", "card_last4": "1111"})
+                    else:
+                        self.assertEqual(set(payload), {"error"})
 
-    def test_database_errors_do_not_log_diagnostics(self):
-        card = dict(card_number="4111111111111111", expiry="12/99", cvc="987")
-        for operation in ("cursor", "select", "update"):
-            with self.subTest(operation=operation):
-                db = MagicMock()
-                error = OperationalError(f"SQL parameters: {card!r}")
-                cur = db.cursor.return_value.__enter__.return_value
-                cur.fetchone.return_value = {"paid": False}
-                if operation == "cursor":
-                    db.cursor.side_effect = error
-                else:
-                    cur.execute.side_effect = [error] if operation == "select" else [None, error]
-                with self.assertLogs(logger, level="DEBUG") as logs:
-                    payload, status = pay_booking(db, 7, card)
-                self.assertEqual((payload, status), ({"error": "payment unavailable"}, 500))
-                self.assertEqual(logs.records[-1].levelno, logging.ERROR)
-                self.assertEqual(logs.records[-1].getMessage(),
-                                 "payment booking_id=7 outcome=database_error")
-                self.assertIsNone(logs.records[-1].exc_info)
-                for value in card.values():
-                    self.assertNotIn(value, "\n".join(logs.output))
+
+class PaymentApiTest(unittest.TestCase):
+    def setUp(self):
+        app = Flask(__name__)
+        app.config["TESTING"] = True
+        app.register_blueprint(payment_bp)
+        self.client = app.test_client()  # No database configured.
+        self.card = dict(card_number="4111111111111111", expiry="12/99", cvc="987")
+
+    def test_success_returns_only_payment_outcome(self):
+        response = self.client.post("/bookings/7/pay", json=self.card)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {
+            "booking_id": 7, "status": "success", "card_last4": "1111"})
+
+    def test_invalid_cards_return_existing_errors(self):
+        cases = [
+            ({}, "card_number must be 13-19 digits"),
+            ({"card_number": "bad"}, "card_number must be 13-19 digits"),
+            ({"card_number": "4111111111111112"}, "card_number is not a valid card number"),
+            ({"expiry": None}, "expiry must be in MM/YY format"),
+            ({"expiry": "13/99"}, "expiry must be in MM/YY format"),
+            ({"expiry": "01/00"}, "card has expired"),
+            ({"cvc": None}, "cvc must be 3 or 4 digits"),
+            ({"cvc": "bad"}, "cvc must be 3 or 4 digits"),
+        ]
+        for fields, error in cases:
+            with self.subTest(fields=fields):
+                body = {**self.card, **fields} if fields else {}
+                response = self.client.post("/bookings/7/pay", json=body)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.get_json(), {"error": error})
+
+    def test_non_object_and_malformed_json_are_rejected(self):
+        for body in ('null', '[]', '"card"', '42', 'true', '{'):
+            with self.subTest(body=body):
+                response = self.client.post(
+                    "/bookings/7/pay", data=body, content_type="application/json")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.get_json(), {
+                    "error": "card_number must be 13-19 digits"})
+
+    def test_forced_failure_returns_existing_error(self):
+        response = self.client.post(
+            "/bookings/7/pay", json={**self.card, "force_failure": True})
+        self.assertEqual(response.status_code, 402)
+        self.assertEqual(response.get_json(), {"error": "payment failed"})
+
+    def test_confirmation_route_is_removed(self):
+        response = self.client.post("/bookings/7/confirmation/pay", data=self.card)
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":

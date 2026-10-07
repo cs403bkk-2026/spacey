@@ -6,10 +6,6 @@ import os
 import re
 from datetime import datetime, timezone
 
-from psycopg import Error as DatabaseError
-
-from payment import repository
-
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
 handler = logging.StreamHandler()
@@ -20,15 +16,6 @@ logger.propagate = False
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
 EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
-
-
-def booking_to_json(row: dict) -> dict:
-    return {
-        **row,
-        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
-        "end_time":   row["end_time"].astimezone(timezone.utc).isoformat(),
-        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
-    }
 
 
 def passes_luhn(card_number: str) -> bool:
@@ -67,13 +54,12 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     return None
 
 
-def pay_booking(db, booking_id, body):
-    """Pay a booking from the JSON body of POST /bookings/<id>/pay.
+def pay_booking(booking_id, body):
+    """Process the JSON body of POST /bookings/<id>/pay.
     Returns (payload, status)."""
     if not isinstance(body, dict):
         body = {}
-    return mark_booking_paid(
-        db,
+    return process_payment(
         booking_id,
         body.get("card_number"),
         body.get("expiry"),
@@ -82,37 +68,25 @@ def pay_booking(db, booking_id, body):
     )
 
 
-def mark_booking_paid(db, booking_id, card_number, expiry, cvc, force_failure=False):
-    """Mocked payment: no provider, so it succeeds unless force_failure
-    is set or the card doesn't look valid (see validate_card). Paying an
-    already-paid booking is a no-op rather than an error, so a retried
-    request can't break the flow or charge twice - and doesn't need a
-    card either. Only the card's last 4 digits are ever stored.
-    Returns (payload, status) - the booking, or an {"error": ...}."""
+def process_payment(booking_id, card_number, expiry, cvc, force_failure=False):
+    """Return a mock outcome without reading or updating booking state.
+
+    The booking owner handles existence checks, retries and applying success.
+    Nothing is persisted; only the card's last four digits are returned.
+    """
     logger.debug("payment booking_id=%s outcome=started", booking_id)
-    try:
-        row = repository.get_booking(db, booking_id)
-        if row is None:
-            logger.warning("payment booking_id=%s outcome=not_found", booking_id)
-            return {"error": "booking not found"}, 404
+    card_error = validate_card(card_number, expiry, cvc)
+    if card_error:
+        logger.warning("payment booking_id=%s outcome=invalid_card", booking_id)
+        return {"error": card_error}, 400
 
-        if row["paid"]:
-            logger.info("payment booking_id=%s outcome=already_paid", booking_id)
-            return booking_to_json(row), 200
+    if force_failure:
+        logger.warning("payment booking_id=%s outcome=failed", booking_id)
+        return {"error": "payment failed"}, 402
 
-        card_error = validate_card(card_number, expiry, cvc)
-        if card_error:
-            logger.warning("payment booking_id=%s outcome=invalid_card", booking_id)
-            return {"error": card_error}, 400
-
-        if force_failure:
-            logger.warning("payment booking_id=%s outcome=failed", booking_id)
-            return {"error": "payment failed"}, 402
-
-        row = repository.mark_paid(db, booking_id, card_number[-4:])
-        logger.info("payment booking_id=%s outcome=succeeded", booking_id)
-        return booking_to_json(row), 200
-    except DatabaseError:
-        # Database diagnostics may include SQL parameters; never log the exception.
-        logger.error("payment booking_id=%s outcome=database_error", booking_id)
-        return {"error": "payment unavailable"}, 500
+    logger.info("payment booking_id=%s outcome=succeeded", booking_id)
+    return {
+        "booking_id": booking_id,
+        "status": "success",
+        "card_last4": card_number[-4:],
+    }, 200

@@ -4,6 +4,7 @@ from datetime import datetime
 
 from psycopg.errors import DeadlockDetected, ExclusionViolation
 
+from payment.services import pay_booking as process_booking_payment
 from purchase.member import normalise_member_name, is_subscribed
 
 BOOKING_COLUMNS = (
@@ -129,6 +130,28 @@ def get_booking(cur, booking_id) -> dict | None:
     return cur.fetchone()
 
 
+def pay_booking(cur, booking_id, body):
+    """Apply a successful payment; existing paid bookings are a no-op."""
+    cur.execute(
+        f"SELECT {BOOKING_COLUMNS} FROM bookings WHERE id = %s FOR UPDATE",
+        (booking_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return {"error": "booking not found"}, 404
+    if row["paid"]:
+        return row, 200
+    outcome, status = process_booking_payment(booking_id, body)
+    if status != 200:
+        return outcome, status
+    cur.execute(
+        "UPDATE bookings SET paid = TRUE, card_last4 = %s WHERE id = %s "
+        f"RETURNING {BOOKING_COLUMNS}",
+        (outcome["card_last4"], booking_id),
+    )
+    return cur.fetchone(), 200
+
+
 def cancel_booking(cur, booking_id) -> dict | None:
     """Delete a booking (its access code goes with it); None if not found."""
     cur.execute(
@@ -136,5 +159,4 @@ def cancel_booking(cur, booking_id) -> dict | None:
         (booking_id,),
     )
     return cur.fetchone()
-
 

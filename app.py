@@ -7,7 +7,7 @@ from flask import Flask, jsonify, redirect, request, session
 from psycopg.rows import dict_row
 
 from access import issue_access_code
-from payment.api import payment_bp
+from payment.services import logger as payment_logger
 from payment.migrations import run_migrations
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
@@ -186,7 +186,6 @@ def create_app(
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
     app.db = get_connection(database_url)
-    app.register_blueprint(payment_bp)
     if reset_on_start:
         reset_tables(app.db)
     with app.db.cursor() as cur:
@@ -381,6 +380,19 @@ def create_app(
             return jsonify(error="booking not found"), 404
 
         return jsonify(booking_to_json(row))
+
+    @app.post("/bookings/<int:booking_id>/pay")
+    def pay_booking(booking_id):
+        try:
+            with app.db.transaction(), app.db.cursor() as cur:
+                payload, status = purchase.booking.pay_booking(
+                    cur, booking_id, request.get_json(silent=True))
+        except psycopg.Error:
+            payment_logger.error("payment booking_id=%s outcome=database_error", booking_id)
+            return jsonify(error="payment unavailable"), 500
+        if status == 200:
+            payload = booking_to_json(payload)
+        return jsonify(payload), status
 
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):
