@@ -47,10 +47,6 @@ Then the API is at <http://127.0.0.1:8000/>. `GET /health` reports status, and `
 
 ## Configuration
 
-Payment logs include only booking ID and fixed outcomes. Set `LOG_LEVEL=DEBUG`
-to include payment start events; the default is `INFO`. Expected rejections use
-`WARNING`; database failures use `ERROR` without database diagnostics or card data.
-
 The app reads these environment variables. None are required to run locally - every one has a
 development-only default - but a real deployment should set all of them explicitly.
 

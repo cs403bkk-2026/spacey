@@ -1,17 +1,8 @@
 """Payment business rules: card validation and the (mocked) payment flow.
 No Flask and no SQL - HTTP lives in api.py, the database in repository.py."""
 
-import logging
-import os
 import re
 from datetime import datetime, timezone
-
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
-logger.addHandler(handler)
-logger.propagate = False
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
@@ -74,17 +65,13 @@ def process_payment(booking_id, card_number, expiry, cvc, force_failure=False):
     The booking owner handles existence checks, retries and applying success.
     Nothing is persisted; only the card's last four digits are returned.
     """
-    logger.debug("payment booking_id=%s outcome=started", booking_id)
     card_error = validate_card(card_number, expiry, cvc)
     if card_error:
-        logger.warning("payment booking_id=%s outcome=invalid_card", booking_id)
         return {"error": card_error}, 400
 
     if force_failure:
-        logger.warning("payment booking_id=%s outcome=failed", booking_id)
         return {"error": "payment failed"}, 402
 
-    logger.info("payment booking_id=%s outcome=succeeded", booking_id)
     return {
         "booking_id": booking_id,
         "status": "success",
