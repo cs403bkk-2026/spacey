@@ -1,15 +1,15 @@
-"""HTTP routes for payments. Parses the request, calls purchase.booking
-(which asks services.py whether the card is accepted), and shapes the
+"""HTTP routes for paying a booking. Parses the request, calls purchase.booking
+(which asks payment.services whether the card is accepted), and shapes the
 response - no business rules or SQL here."""
 
 from flask import Blueprint, current_app, jsonify, redirect, request, url_for
 
 import purchase.booking
 
-payment_bp = Blueprint("payment", __name__)
+booking_bp = Blueprint("booking", __name__)
 
 
-@payment_bp.post("/bookings/<int:booking_id>/pay")
+@booking_bp.post("/bookings/<int:booking_id>/pay")
 def pay_booking(booking_id):
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -28,7 +28,7 @@ def pay_booking(booking_id):
     return jsonify(payload), status
 
 
-@payment_bp.post("/bookings/<int:booking_id>/confirmation/pay")
+@booking_bp.post("/bookings/<int:booking_id>/confirmation/pay")
 def pay_from_confirmation(booking_id):
     with current_app.db.cursor() as cur:
         payload, status = purchase.booking.mark_booking_paid(

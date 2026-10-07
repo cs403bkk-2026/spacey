@@ -7,13 +7,13 @@ from flask import Flask, jsonify, redirect, request, session
 from psycopg.rows import dict_row
 
 from access import issue_access_code
-from payment.api import payment_bp
 from payment.migrations import run_migrations
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
 import purchase.member
 import purchase.schema
 import purchase.space
+from purchase.api import booking_bp
 from purchase.booking import booking_to_json
 from purchase.member import subscribe
 from purchase.space import booked_space_ids
@@ -178,7 +178,7 @@ def create_app(
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
     app.db = get_connection(database_url)
-    app.register_blueprint(payment_bp)
+    app.register_blueprint(booking_bp)
     if reset_on_start:
         reset_tables(app.db)
     with app.db.cursor() as cur:
