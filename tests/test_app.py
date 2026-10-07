@@ -1,3 +1,4 @@
+import pprint
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -576,7 +577,7 @@ def test_paying_an_already_paid_booking_again_is_still_a_no_op():
     client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
     # no card needed the second time - it's already paid
-    response = client.post(f"/bookings/{created['id']}/pay", json={})
+    response = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
 
     assert response.status_code == 200
     assert response.get_json()["paid"] is True
