@@ -6,10 +6,9 @@ info:
     and get access through a mocked lock.
 
 
-    This document covers the JSON API only. A few routes render HTML pages
-    for a browser instead (the space list at `/`, the booking form's target
-    `POST /spaces/{spaceId}/book`, the booking confirmation page and its
-    Pay/Unlock buttons, and `/dashboard`) and are not listed here.
+    This document covers the JSON API. `GET /` redirects to the browser
+    client at `/app/`. `GET /dashboard` redirects to the external Grafana
+    business metrics report.
   version: "1.0"
 servers:
   - url: /
@@ -229,8 +228,9 @@ paths:
                   type: string
                   default: guest
                   description: >
-                    Defaults to `guest` if omitted - there is no
-                    requirement yet that a real name is given (issue #22).
+                    Stored trimmed of surrounding spaces. Defaults to
+                    `guest` if omitted or blank - there is no requirement
+                    yet that a real name is given (issue #22).
                   example: annabel
                 start_time:
                   type: string
@@ -257,8 +257,9 @@ paths:
           description: >
             `start_time and end_time are required (ISO 8601 with
             timezone)`, `end_time must be after start_time`, `party_size
-            must be a whole number of at least 1`, or `party_size {n}
-            exceeds this space's capacity of {capacity}`.
+            must be a whole number of at least 1`, `party_size {n}
+            exceeds this space's capacity of {capacity}`, or `member must
+            be a string`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -281,6 +282,27 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BookingList" }
+
+  /me/bookings:
+    get:
+      tags: [bookings]
+      summary: List the logged-in account's bookings.
+      description: >
+        Bookings made while logged in to this session's account, filtered
+        on the server. Needs the session cookie set by `POST /login`. Guest
+        bookings (`user_id` null) are never included.
+      responses:
+        "200":
+          description: That account's bookings, earliest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BookingList" }
+        "401":
+          description: Not logged in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "log in to see your bookings" }
 
   /bookings/{bookingId}:
     parameters:
@@ -374,6 +396,12 @@ paths:
               example: { error: payment failed }
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "500":
+          description: Database failure during payment; check booking status before retrying.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: payment unavailable }
 
   /bookings/{bookingId}/unlock:
     post:
@@ -447,7 +475,6 @@ paths:
       tags: [accounts]
       summary: Create an account.
       description: >
-        Also available as a plain HTML form at GET /register, for a browser.
         Email is matched trimmed and lower-cased, and must be unique. The
         password is hashed (werkzeug.security) and never stored or returned
         as plain text.
@@ -489,9 +516,8 @@ paths:
       tags: [accounts]
       summary: Start a session.
       description: >
-        Also available as a plain HTML form at GET /login. A wrong password
-        and an unknown email return the identical error, so a login attempt
-        can't be used to find out which emails are registered.
+        A wrong password and an unknown email return the identical error, so
+        a login attempt can't be used to find out which emails are registered.
       requestBody:
         required: true
         content:
@@ -534,7 +560,10 @@ paths:
     get:
       tags: [operations]
       summary: Business metrics, as JSON.
-      description: The same numbers shown on `/dashboard`, for machine consumption.
+      description: >-
+        The application's own business totals, for machine consumption. The
+        external Grafana business metrics report is reconciled against these
+        values; the application itself no longer renders them as a page.
       responses:
         "200":
           description: Current totals.
