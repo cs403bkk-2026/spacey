@@ -77,6 +77,34 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 - [ADR 0001: Move reporting to Grafana](docs/adr/0001-move-reporting-to-grafana.md)
 - [ADR 0002: Separate the browser client](docs/adr/0002-separate-frontend-repository.md)
 
+## Modules
+
+### Purchase (`purchase/`)
+
+- **Data:** `spaces`, `bookings`, `subscriptions`, `users`. `purchase/schema.py` also creates
+  `access` and `bookings.card_last4`, which other modules use.
+- **Rules:** a booking's end is after its start, party size is 1 to the space's capacity, and
+  bookings for the same space can't overlap (back-to-back is fine; Postgres also enforces this
+  with `no_overlapping_bookings`). The price is the hourly rate prorated to the booked time and
+  saved on the booking. A subscriber's booking is paid at once and costs 0. A blank member name
+  becomes `guest`.
+- **Dependencies:** Postgres (with `btree_gist`); `app.py` calls into it for every route.
+- **Open boundary:** schema setup still covers tables that belong to other modules.
+
+### Payment (`payment/`)
+
+- **Data:** the `payments` table (migration `001_create_payments.sql`), plus `paid` and
+  `card_last4` on `bookings`.
+- **Rules:** the card needs 13-19 digits, a valid Luhn checksum, a 3-4 digit CVC and an unexpired
+  `MM/YY` expiry. Only the last 4 digits are stored. Paying a booking that's already paid returns
+  it unchanged. `force_failure: true` returns 402. The provider is mocked.
+- **Dependencies:** reads and updates the `bookings` table owned by purchase. `access.py`
+  (`/unlock`) and `/metrics` rely on `bookings.paid`.
+- **Open boundary:** payment writes straight to `bookings` instead of going through purchase,
+  even though the migration says "Payment never touches Bookings". The pay flow doesn't record
+  anything in `payments` yet (only tests call `insert_payment`), so paid status lives only on
+  the booking.
+
 ## API reference
 
 Every JSON endpoint is documented in detail in [openapi.yaml](openapi.yaml) (OpenAPI 3.0) - request
