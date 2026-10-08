@@ -101,9 +101,10 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Dependencies:** reads and updates the `bookings` table owned by purchase. `access.py`
   (`/unlock`) and `/metrics` rely on `bookings.paid`.
 - **Open boundary:** payment writes straight to `bookings` instead of going through purchase,
-  even though the migration says "Payment never touches Bookings". The pay flow doesn't record
-  anything in `payments` yet (only tests call `insert_payment`), so paid status lives only on
-  the booking.
+  even though the migration says "Payment never touches Bookings". The pay flow records each
+  successful or declined attempt in `payments` (free bookings and invalid cards aren't recorded),
+  and `GET /bookings/<id>/payments` lists them, but whether a booking is paid is still read from
+  `bookings.paid`.
 
 ## API reference
 

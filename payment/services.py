@@ -20,6 +20,22 @@ def booking_to_json(row: dict) -> dict:
     }
 
 
+def payment_to_json(row: dict) -> dict:
+    return {
+        **row,
+        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
+    }
+
+
+def list_payments(db, booking_id):
+    """Every payment attempt for a booking, oldest first.
+    Returns (payload, status) - {"payments": [...]}, or an {"error": ...}."""
+    if repository.get_booking(db, booking_id) is None:
+        return {"error": "booking not found"}, 404
+    rows = repository.get_payments_for_booking(db, booking_id)
+    return {"payments": [payment_to_json(row) for row in rows]}, 200
+
+
 def passes_luhn(card_number: str) -> bool:
     """Luhn checksum: from the right, double every second digit (subtracting 9
     if that gives more than 9); the digit sum must be divisible by 10."""
@@ -90,7 +106,24 @@ def mark_booking_paid(db, booking_id, card_number, expiry, cvc, force_failure=Fa
         return {"error": card_error}, 400
 
     if force_failure:
+        record_payment(db, row, "failed", card_number[-4:], reason="payment failed")
         return {"error": "payment failed"}, 402
 
     row = repository.mark_paid(db, booking_id, card_number[-4:])
+    record_payment(db, row, "success", card_number[-4:])
     return booking_to_json(row), 200
+
+
+def record_payment(db, booking, status, card_last4, reason=None):
+    """Store a payment attempt in the payments table. A free booking (amount
+    0) has no money to record - the table only accepts amounts above 0."""
+    if not booking["amount_cents"]:
+        return
+    repository.insert_payment(
+        db,
+        booking["id"],
+        booking["amount_cents"],
+        status,
+        reason=reason,
+        card_last4=card_last4,
+    )

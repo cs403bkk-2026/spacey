@@ -16,6 +16,12 @@ def pay_booking(booking_id):
     return jsonify(payload), status
 
 
+@payment_bp.get("/bookings/<int:booking_id>/payments")
+def list_payments(booking_id):
+    payload, status = services.list_payments(current_app.db, booking_id)
+    return jsonify(payload), status
+
+
 @payment_bp.post("/bookings/<int:booking_id>/confirmation/pay")
 def pay_from_confirmation(booking_id):
     payload, status = services.mark_booking_paid(

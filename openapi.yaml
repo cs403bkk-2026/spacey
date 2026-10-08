@@ -397,6 +397,26 @@ paths:
         "404":
           $ref: "#/components/responses/BookingNotFound"
 
+  /bookings/{bookingId}/payments:
+    get:
+      tags: [bookings]
+      summary: List a booking's payment attempts.
+      description: >
+        Every attempt made through POST /bookings/{bookingId}/pay, oldest
+        first: successful payments and declined ones (`force_failure`).
+        Requests rejected for an invalid card, retries of an already-paid
+        booking and free (0 cent) bookings leave no record.
+      parameters:
+        - $ref: "#/components/parameters/BookingId"
+      responses:
+        "200":
+          description: The booking's payments (empty if there are none).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentList" }
+        "404":
+          $ref: "#/components/responses/BookingNotFound"
+
   /bookings/{bookingId}/unlock:
     post:
       tags: [bookings]
@@ -747,6 +767,36 @@ components:
         id: { type: integer, example: 1 }
         email: { type: string, format: email, example: annabel@example.com }
       required: [id, email]
+
+    Payment:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        booking_id: { type: integer, example: 1 }
+        amount_cents: { type: integer, example: 1500 }
+        currency: { type: string, enum: [USD] }
+        status: { type: string, enum: [success, failed, unknown] }
+        reason:
+          type: string
+          nullable: true
+          description: Why the attempt failed, or null if it succeeded.
+          example: payment failed
+        card_last4:
+          type: string
+          nullable: true
+          description: The last 4 digits of the card used; the full number and CVC are never stored.
+          example: "4242"
+        idempotency_key: { type: string, nullable: true }
+        created_at: { type: string, format: date-time, example: "2026-09-24T02:48:20.933270+00:00" }
+      required: [id, booking_id, amount_cents, currency, status, reason, card_last4, idempotency_key, created_at]
+
+    PaymentList:
+      type: object
+      properties:
+        payments:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+      required: [payments]
 
     BookingList:
       type: object
