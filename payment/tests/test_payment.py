@@ -372,3 +372,26 @@ def test_paying_twice_only_counts_revenue_once():
     assert second.status_code == 200
     assert metrics["revenue_cents"] == 1500
     assert metrics["paid_bookings"] == 1
+
+
+def test_refund_booking_records_a_refund_in_payments():
+    from payment.services import refund_booking
+    from payment.repository import get_payments_for_booking
+    app = create_app(reset_on_start=True)
+    refund = refund_booking(
+        app.db,
+        booking_id=42,
+        amount_cents=1500,
+        card_last4="4242",
+        reason="cancellation",
+    )
+    assert refund["status"] == "refunded"
+    assert refund["amount_cents"] == 1500
+    assert refund["card_last4"] == "4242"
+    assert refund["booking_id"] == 42
+    assert refund["reason"] == "cancellation"
+
+    records = get_payments_for_booking(app.db, 42)
+    assert len(records) == 1
+    assert records[0]["status"] == "refunded"
+

@@ -57,3 +57,17 @@ def authorize_card(card_number, expiry, cvc, force_failure=False):
     if force_failure:
         return {"error": "payment failed"}, 402
     return None
+
+
+def refund_booking(db, booking_id, amount_cents, card_last4=None, reason="cancellation"):
+    """Record a refund for a cancelled booking.
+    Delegates persistence to payment.repository.insert_refund."""
+    from payment import repository
+    return repository.insert_refund(
+        db,
+        booking_id=booking_id,
+        amount_cents=amount_cents,
+        reason=reason,
+        card_last4=card_last4,
+    )
+
