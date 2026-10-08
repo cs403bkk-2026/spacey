@@ -405,7 +405,9 @@ paths:
         Every attempt made through POST /bookings/{bookingId}/pay, oldest
         first: successful payments and declined ones (`force_failure`).
         Requests rejected for an invalid card, retries of an already-paid
-        booking and free (0 cent) bookings leave no record.
+        booking and free (0 cent) bookings leave no record. Only the
+        payments table is read, not bookings, so an unknown booking returns
+        an empty list rather than 404.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       responses:
@@ -414,8 +416,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PaymentList" }
-        "404":
-          $ref: "#/components/responses/BookingNotFound"
 
   /bookings/{bookingId}/unlock:
     post:

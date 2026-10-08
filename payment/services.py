@@ -28,10 +28,9 @@ def payment_to_json(row: dict) -> dict:
 
 
 def list_payments(db, booking_id):
-    """Every payment attempt for a booking, oldest first.
-    Returns (payload, status) - {"payments": [...]}, or an {"error": ...}."""
-    if repository.get_booking(db, booking_id) is None:
-        return {"error": "booking not found"}, 404
+    """Every payment attempt for a booking, oldest first. Reads only the
+    payments table - no booking lookup - so an unknown booking simply has
+    no payments. Returns (payload, status) - {"payments": [...]}."""
     rows = repository.get_payments_for_booking(db, booking_id)
     return {"payments": [payment_to_json(row) for row in rows]}, 200
 

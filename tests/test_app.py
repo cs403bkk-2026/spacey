@@ -1755,10 +1755,10 @@ def test_payments_only_list_that_booking():
 
     assert [p["booking_id"] for p in response.get_json()["payments"]] == [first["id"]]
 
-def test_payments_for_unknown_booking_returns_404():
+def test_payments_for_unknown_booking_is_empty():
     client = make_client()
 
     response = client.get("/bookings/999/payments")
 
-    assert response.status_code == 404
-    assert response.get_json() == {"error": "booking not found"}
+    assert response.status_code == 200
+    assert response.get_json() == {"payments": []}
