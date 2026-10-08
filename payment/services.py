@@ -47,7 +47,7 @@ def validate_card(card_number, expiry, cvc) -> str | None:
 
 
 def pay_booking(booking_id, body):
-    """Process the JSON body of POST /bookings/<id>/pay.
+    """Process the JSON body of POST /payment/bookings/<id>/pay.
     Returns (payload, status)."""
     if not isinstance(body, dict):
         body = {}
