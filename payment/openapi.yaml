@@ -150,44 +150,6 @@ paths:
                 required: [error]
               example: { error: payment unavailable }
 
-  /bookings/{bookingId}/confirmation/pay:
-    post:
-      tags: [payments]
-      operationId: payFromConfirmation
-      summary: Pay from the booking confirmation form (mocked).
-      description: >
-        Same card checks as `payBooking`, as a form post. No
-        `force_failure`. Redirects to the booking confirmation page. On
-        failure, the `error` query parameter is the error detail.
-      parameters:
-        - $ref: "#/components/parameters/BookingId"
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                card_number:
-                  type: string
-                  description: Digits only, 13-19 characters.
-                expiry:
-                  type: string
-                  description: MM/YY, must not be in the past.
-                cvc:
-                  type: string
-                  description: Digits only, 3-4 characters.
-              required: [card_number, expiry, cvc]
-      responses:
-        "302":
-          description: >
-            Redirect to the booking confirmation page. On failure, `error`
-            is the error detail (for example `card has expired`).
-          headers:
-            Location:
-              description: Booking confirmation URL.
-              schema: { type: string }
-
 components:
   parameters:
     BookingId:

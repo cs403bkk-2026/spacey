@@ -333,8 +333,7 @@ paths:
         "404":
           $ref: "#/components/responses/BookingNotFound"
 
-  # POST /bookings/{bookingId}/pay (and /confirmation/pay) is documented in
-  # payment/openapi.yaml.
+  # POST /bookings/{bookingId}/pay is documented in payment/openapi.yaml.
 
   /bookings/{bookingId}/unlock:
     post:

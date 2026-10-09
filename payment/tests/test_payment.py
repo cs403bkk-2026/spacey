@@ -269,7 +269,7 @@ def test_the_first_failing_card_field_decides_the_error():
     )
     assert client.get(f"/bookings/{booking_id}").get_json()["paid"] is False
 
-def test_confirmation_page_pay_form_has_card_fields_and_shows_last4_once_paid():
+def test_pay_accepts_13_to_19_digit_cards_and_returns_last4():
     client = make_client()
     # Standard test numbers: Visa 16, Amex 15, a 13-digit and a 19-digit number
     for number in ["4111111111111111", "378282246310005", "4222222222222", "6011000000000000001"]:
