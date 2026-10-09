@@ -1,6 +1,6 @@
 """Payment business rules: card validation and the (mocked) payment decision.
-No Flask, no SQL and no bookings - HTTP lives in api.py, the database in
-repository.py, and purchase.booking owns a booking's paid state."""
+No Flask or SQL. HTTP lives in api.py, the database in repository.py,
+and purchase.booking owns a booking's paid state."""
 
 import re
 from datetime import datetime, timezone
@@ -44,6 +44,37 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     if (year, month) < (now.year, now.month):
         return "card has expired"
     return None
+
+
+def pay_booking(booking_id, body):
+    """Process the JSON body of POST /payment/bookings/<id>/pay.
+    Returns (payload, status)."""
+    if not isinstance(body, dict):
+        body = {}
+    return process_payment(
+        booking_id,
+        body.get("card_number"),
+        body.get("expiry"),
+        body.get("cvc"),
+        force_failure=body.get("force_failure") is True,
+    )
+
+
+def process_payment(booking_id, card_number, expiry, cvc, force_failure=False):
+    """Return a mock outcome without reading or updating booking state.
+
+    The booking owner handles existence checks, retries and applying success.
+    Nothing is persisted; only the card's last four digits are returned.
+    """
+    rejected = authorize_card(card_number, expiry, cvc, force_failure)
+    if rejected:
+        return rejected
+
+    return {
+        "booking_id": booking_id,
+        "status": "success",
+        "card_last4": card_number[-4:],
+    }, 200
 
 
 def authorize_card(card_number, expiry, cvc, force_failure=False):
