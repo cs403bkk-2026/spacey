@@ -7,6 +7,7 @@ from flask import Flask, jsonify, redirect, request, session
 from psycopg.rows import dict_row
 
 from access import issue_access_code
+from access.migrations import run_migrations as run_access_migrations
 from payment.migrations import run_migrations
 from payment.services import refund_payment
 # Called qualified, since route functions below reuse names like get_space.
@@ -51,6 +52,8 @@ def get_connection(database_url: str) -> psycopg.Connection:
         purchase.schema.create_tables(cur)
     # PT-016: separate payments table (enum status and currency).
     run_migrations(conn)
+    # ACC-10: Access owns its table; it references bookings, so it runs after.
+    run_access_migrations(conn)
     return conn
 
 
@@ -386,6 +389,13 @@ def create_app(
 
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):
+        # Purchase decides whether the booking may be unlocked; Access only
+        # issues the code (ACC-10).
+        with app.db.cursor() as cur:
+            refusal = purchase.booking.check_unlockable(cur, booking_id)
+        if refusal is not None:
+            payload, status = refusal
+            return jsonify(payload), status
         payload, status = issue_access_code(booking_id)
         return jsonify(payload), status
 
