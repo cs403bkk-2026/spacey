@@ -142,6 +142,17 @@ def get_booking(cur, booking_id) -> dict | None:
     return cur.fetchone()
 
 
+def check_unlockable(cur, booking_id) -> tuple[dict, int] | None:
+    """Purchase's check before Access issues a code: the booking must exist
+    and be paid. Returns (payload, status) to answer with, or None if fine."""
+    booking = get_booking(cur, booking_id)
+    if booking is None:
+        return {"error": "booking not found"}, 404
+    if not booking["paid"]:
+        return {"error": "booking is not paid"}, 402
+    return None
+
+
 def mark_paid(cur, booking_id, card_last4) -> dict | None:
     """Flip the booking to paid, keeping only the card's last 4 digits.
     Returns the updated row."""
