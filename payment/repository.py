@@ -39,3 +39,24 @@ def get_payments_for_booking(db, booking_id):
             (booking_id,),
         )
         return cur.fetchall()
+
+
+def insert_refund(
+    db,
+    booking_id,
+    amount_cents,
+    currency="USD",
+    reason="cancellation",
+    card_last4=None,
+):
+    """Record a refund for a booking in the payments table."""
+    return insert_payment(
+        db,
+        booking_id=booking_id,
+        amount_cents=amount_cents,
+        status="refunded",
+        currency=currency,
+        reason=reason,
+        card_last4=card_last4,
+    )
+
