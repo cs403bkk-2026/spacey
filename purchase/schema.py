@@ -5,8 +5,8 @@ database ends up with every table and column the app needs."""
 def create_tables(cur) -> None:
     """Create or upgrade every table the app uses. Safe to run on every
     start: each statement is IF NOT EXISTS or only fills in missing data.
-    All tables live here for now, including ones other contexts use
-    (subscriptions, access, bookings.card_last4)."""
+    Tables other contexts use live here for now (subscriptions,
+    bookings.card_last4); payments and access have their own migrations."""
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS spaces (
@@ -37,20 +37,6 @@ def create_tables(cur) -> None:
             member TEXT PRIMARY KEY,
             active BOOLEAN NOT NULL DEFAULT TRUE,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-        """
-    )
-    # The access code handed out when a booking is unlocked (#171).
-    # One code per booking, kept so a page refresh shows the same code
-    # instead of a new one. ON DELETE CASCADE because cancelling a
-    # booking deletes its row, and the code is worthless without it.
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS access (
-            booking_id INTEGER PRIMARY KEY
-                REFERENCES bookings (id) ON DELETE CASCADE,
-            access_code TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """
     )
