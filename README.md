@@ -47,6 +47,10 @@ Then the API is at <http://127.0.0.1:8000/>. `GET /health` reports status, and `
 
 ## Configuration
 
+Payment logs include only booking ID and fixed outcomes. Set `LOG_LEVEL=DEBUG`
+to include payment start events; the default is `INFO`. Expected rejections use
+`WARNING`; database failures use `ERROR` without database diagnostics or card data.
+
 The app reads these environment variables. None are required to run locally - every one has a
 development-only default - but a real deployment should set all of them explicitly.
 
@@ -93,18 +97,15 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Payment (`payment/`)
 
-- **Data:** the `payments` table (migration `001_create_payments.sql`), plus `paid` and
-  `card_last4` on `bookings`.
+- **Data:** the `payments` table (migration `001_create_payments.sql`). One row per payment
+  attempt that reached the (mocked) provider: `success`, or `failed` when it declines.
 - **Rules:** the card needs 13-19 digits, a valid Luhn checksum, a 3-4 digit CVC and an unexpired
-  `MM/YY` expiry. Only the last 4 digits are stored. Paying a booking that's already paid returns
-  it unchanged. `force_failure: true` returns 402. The provider is mocked.
-- **Dependencies:** reads and updates the `bookings` table owned by purchase. `access.py`
-  (`/unlock`) and `/metrics` rely on `bookings.paid`.
-- **Open boundary:** payment writes straight to `bookings` instead of going through purchase,
-  even though the migration says "Payment never touches Bookings". The pay flow records each
-  successful or declined attempt in `payments` (free bookings and invalid cards aren't recorded),
-  and `GET /bookings/<id>/payments` lists them, but whether a booking is paid is still read from
-  `bookings.paid`.
+  `MM/YY` expiry. Only the last 4 digits are stored. `force_failure: true` returns 402. The
+  provider is mocked. Invalid cards, already-paid retries and free bookings record nothing.
+- **Dependencies:** none on `bookings`. Purchase (`purchase/booking.py`) runs the pay flow: it
+  asks `authorize_card` for a decision, sets `bookings.paid` itself, and hands the booking's id
+  and amount to `record_payment`. `GET /bookings/<id>/payments` reads only `payments`.
+- **Open boundary:** `access.py` (`/unlock`) and `/metrics` still read `bookings.paid` directly.
 
 ## API reference
 
