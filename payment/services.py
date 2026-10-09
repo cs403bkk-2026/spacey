@@ -59,15 +59,47 @@ def authorize_card(card_number, expiry, cvc, force_failure=False):
     return None
 
 
-def refund_booking(db, booking_id, amount_cents, card_last4=None, reason="cancellation"):
-    """Record a refund for a cancelled booking.
+def refund_payment(
+    db=None,
+    booking_id=None,
+    amount_cents=None,
+    card_last4=None,
+    reason="cancellation",
+):
+    """Record a refund for a booking in the payments table.
     Delegates persistence to payment.repository.insert_refund."""
     from payment import repository
+
+    if isinstance(db, int) and (booking_id is None or isinstance(booking_id, (int, float))):
+        actual_booking_id = db
+        actual_amount_cents = booking_id
+        if isinstance(amount_cents, str):
+            actual_reason = amount_cents
+            actual_card_last4 = card_last4
+        else:
+            actual_reason = reason
+            actual_card_last4 = card_last4
+        from flask import current_app
+        actual_db = current_app.db
+    else:
+        actual_db = db
+        actual_booking_id = booking_id
+        actual_amount_cents = amount_cents
+        actual_card_last4 = card_last4
+        actual_reason = reason
+
+    if actual_db is None:
+        from flask import current_app
+        actual_db = current_app.db
+
     return repository.insert_refund(
-        db,
-        booking_id=booking_id,
-        amount_cents=amount_cents,
-        reason=reason,
-        card_last4=card_last4,
+        actual_db,
+        booking_id=actual_booking_id,
+        amount_cents=actual_amount_cents,
+        reason=actual_reason,
+        card_last4=actual_card_last4,
     )
+
+
+refund_booking = refund_payment
 

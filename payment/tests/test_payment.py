@@ -374,11 +374,11 @@ def test_paying_twice_only_counts_revenue_once():
     assert metrics["paid_bookings"] == 1
 
 
-def test_refund_booking_records_a_refund_in_payments():
-    from payment.services import refund_booking
+def test_refund_payment_records_a_refund_in_payments():
+    from payment.services import refund_payment
     from payment.repository import get_payments_for_booking
     app = create_app(reset_on_start=True)
-    refund = refund_booking(
+    refund = refund_payment(
         app.db,
         booking_id=42,
         amount_cents=1500,
@@ -394,4 +394,22 @@ def test_refund_booking_records_a_refund_in_payments():
     records = get_payments_for_booking(app.db, 42)
     assert len(records) == 1
     assert records[0]["status"] == "refunded"
+
+
+def test_refund_payment_can_be_imported_from_service():
+    from payment.service import refund_payment, refund_booking
+    assert callable(refund_payment)
+    assert callable(refund_booking)
+
+
+def test_refund_booking_backward_compatibility():
+    from payment.services import refund_booking
+    app = create_app(reset_on_start=True)
+    refund = refund_booking(
+        app.db,
+        booking_id=99,
+        amount_cents=500,
+    )
+    assert refund["status"] == "refunded"
+    assert refund["amount_cents"] == 500
 

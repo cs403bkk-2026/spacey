@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 
 from access import issue_access_code
 from payment.migrations import run_migrations
+from payment.services import refund_payment
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
 import purchase.member
@@ -371,6 +372,15 @@ def create_app(
 
         if row is None:
             return jsonify(error="booking not found"), 404
+
+        if row["paid"] and row["amount_cents"] > 0:
+            refund_payment(
+                app.db,
+                booking_id=row["id"],
+                amount_cents=row["amount_cents"],
+                card_last4=row.get("card_last4"),
+                reason="cancellation",
+            )
 
         return jsonify(booking_to_json(row))
 

@@ -187,23 +187,11 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
 
 
 def cancel_booking(cur, booking_id) -> dict | None:
-    """Delete a booking (its access code goes with it); None if not found.
-    If the booking was paid and cost money, records a refund in payments (PT-013)."""
+    """Delete a booking (its access code goes with it); None if not found."""
     cur.execute(
         f"DELETE FROM bookings WHERE id = %s RETURNING {BOOKING_COLUMNS}",
         (booking_id,),
     )
-    row = cur.fetchone()
-    if row is not None and row["paid"] and row["amount_cents"] > 0:
-        from payment.services import refund_booking
-        refund_booking(
-            cur.connection,
-            booking_id=row["id"],
-            amount_cents=row["amount_cents"],
-            card_last4=row.get("card_last4"),
-            reason="cancellation",
-        )
-    return row
-
+    return cur.fetchone()
 
 
