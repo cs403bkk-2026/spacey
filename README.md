@@ -81,6 +81,32 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 - [ADR 0001: Move reporting to Grafana](docs/adr/0001-move-reporting-to-grafana.md)
 - [ADR 0002: Separate the browser client](docs/adr/0002-separate-frontend-repository.md)
 
+## Modules
+
+### Purchase (`purchase/`)
+
+- **Data:** `spaces`, `bookings`, `subscriptions`, `users`. `purchase/schema.py` also creates
+  `access` and `bookings.card_last4`, which other modules use.
+- **Rules:** a booking's end is after its start, party size is 1 to the space's capacity, and
+  bookings for the same space can't overlap (back-to-back is fine; Postgres also enforces this
+  with `no_overlapping_bookings`). The price is the hourly rate prorated to the booked time and
+  saved on the booking. A subscriber's booking is paid at once and costs 0. A blank member name
+  becomes `guest`.
+- **Dependencies:** Postgres (with `btree_gist`); `app.py` calls into it for every route.
+- **Open boundary:** schema setup still covers tables that belong to other modules.
+
+### Payment (`payment/`)
+
+- **Data:** the `payments` table (migration `001_create_payments.sql`). One row per payment
+  attempt that reached the (mocked) provider: `success`, or `failed` when it declines.
+- **Rules:** the card needs 13-19 digits, a valid Luhn checksum, a 3-4 digit CVC and an unexpired
+  `MM/YY` expiry. Only the last 4 digits are stored. `force_failure: true` returns 402. The
+  provider is mocked. Invalid cards, already-paid retries and free bookings record nothing.
+- **Dependencies:** none on `bookings`. Purchase (`purchase/booking.py`) runs the pay flow: it
+  asks `authorize_card` for a decision, sets `bookings.paid` itself, and hands the booking's id
+  and amount to `record_payment`. `GET /bookings/<id>/payments` reads only `payments`.
+- **Open boundary:** `access.py` (`/unlock`) and `/metrics` still read `bookings.paid` directly.
+
 ## API reference
 
 Every JSON endpoint is documented in detail in [openapi.yaml](openapi.yaml) (OpenAPI 3.0) - request

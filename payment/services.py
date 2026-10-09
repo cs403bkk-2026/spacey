@@ -5,6 +5,8 @@ repository.py, and purchase.booking owns a booking's paid state."""
 import re
 from datetime import datetime, timezone
 
+from payment import repository
+
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
 EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
@@ -57,3 +59,35 @@ def authorize_card(card_number, expiry, cvc, force_failure=False):
     if force_failure:
         return {"error": "payment failed"}, 402
     return None
+
+
+def record_payment(cur, booking_id, amount_cents, status, card_last4, reason=None):
+    """Store one payment attempt in the payments table, on the caller's
+    connection. The caller hands over the booking's id and amount - nothing
+    here reads bookings. A free booking (amount 0) has no money to record -
+    the table only accepts amounts above 0."""
+    if not amount_cents:
+        return
+    repository.insert_payment(
+        cur.connection,
+        booking_id,
+        amount_cents,
+        status,
+        reason=reason,
+        card_last4=card_last4,
+    )
+
+
+def payment_to_json(row: dict) -> dict:
+    return {
+        **row,
+        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
+    }
+
+
+def list_payments(db, booking_id):
+    """Every payment attempt for a booking, oldest first. Reads only the
+    payments table - no booking lookup - so an unknown booking simply has
+    no payments. Returns (payload, status) - {"payments": [...]}."""
+    rows = repository.get_payments_for_booking(db, booking_id)
+    return {"payments": [payment_to_json(row) for row in rows]}, 200

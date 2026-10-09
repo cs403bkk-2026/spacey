@@ -6,7 +6,7 @@ from psycopg import Error as DatabaseError
 from psycopg.errors import DeadlockDetected, ExclusionViolation
 
 from shared.logger import logger
-from payment.services import authorize_card
+from payment.services import authorize_card, record_payment
 from purchase.member import normalise_member_name, is_subscribed
 
 BOOKING_COLUMNS = (
@@ -175,9 +175,15 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
         if rejected:
             outcome = "invalid_card" if rejected[1] == 400 else "failed"
             logger.warning("payment booking_id=%s outcome=%s", booking_id, outcome)
+            if outcome == "failed":
+                record_payment(
+                    cur, booking_id, row.get("amount_cents"), "failed",
+                    card_number[-4:], reason=rejected[0]["error"],
+                )
             return rejected
 
         row = mark_paid(cur, booking_id, card_number[-4:])
+        record_payment(cur, booking_id, row.get("amount_cents"), "success", card_number[-4:])
         logger.info("payment booking_id=%s outcome=succeeded", booking_id)
         return row, 200
     except DatabaseError:

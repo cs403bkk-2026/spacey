@@ -372,3 +372,96 @@ def test_paying_twice_only_counts_revenue_once():
     assert second.status_code == 200
     assert metrics["revenue_cents"] == 1500
     assert metrics["paid_bookings"] == 1
+
+# --- PT-001: the pay flow records payments, GET /bookings/<id>/payments lists them ---
+
+def test_successful_payment_is_listed_in_the_booking_payments():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+
+    response = client.get(f"/bookings/{created['id']}/payments")
+
+    assert response.status_code == 200
+    [payment] = response.get_json()["payments"]
+    assert payment["booking_id"] == created["id"]
+    assert payment["amount_cents"] == created["amount_cents"]
+    assert payment["currency"] == "USD"
+    assert payment["status"] == "success"
+    assert payment["reason"] is None
+    assert payment["card_last4"] == "4242"
+    assert "card_number" not in payment and "cvc" not in payment
+
+def test_declined_payment_is_listed_as_failed():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json={**VALID_CARD, "force_failure": True})
+
+    response = client.get(f"/bookings/{created['id']}/payments")
+
+    [payment] = response.get_json()["payments"]
+    assert payment["status"] == "failed"
+    assert payment["reason"] == "payment failed"
+
+def test_retry_after_a_decline_lists_both_attempts_oldest_first():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json={**VALID_CARD, "force_failure": True})
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+
+    response = client.get(f"/bookings/{created['id']}/payments")
+
+    assert [p["status"] for p in response.get_json()["payments"]] == ["failed", "success"]
+
+def test_paying_twice_lists_only_one_payment():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+
+    response = client.get(f"/bookings/{created['id']}/payments")
+
+    assert len(response.get_json()["payments"]) == 1
+
+def test_invalid_card_lists_no_payment():
+    client = make_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json={**VALID_CARD, "cvc": "1"})
+
+    response = client.get(f"/bookings/{created['id']}/payments")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"payments": []}
+
+def test_payments_only_list_that_booking():
+    client = make_client()
+    first = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    second = client.post(
+        "/spaces/1/bookings", json={"member": "gregory", **slot(3, 4)}
+    ).get_json()
+    client.post(f"/bookings/{first['id']}/pay", json=VALID_CARD)
+    client.post(f"/bookings/{second['id']}/pay", json=VALID_CARD)
+
+    response = client.get(f"/bookings/{first['id']}/payments")
+
+    assert [p["booking_id"] for p in response.get_json()["payments"]] == [first["id"]]
+
+def test_payments_for_unknown_booking_is_empty():
+    client = make_client()
+
+    response = client.get("/bookings/999/payments")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"payments": []}

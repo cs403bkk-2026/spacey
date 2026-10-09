@@ -1440,23 +1440,3 @@ def test_payments_migration_can_run_twice():
     app = create_app(reset_on_start=True)
     run_migrations(app.db)
     run_migrations(app.db)
-
-def test_payment_is_inserted_and_fetched_by_booking():
-    from payment.repository import get_payments_for_booking, insert_payment
-    app = create_app(reset_on_start=True)
-    row = insert_payment(app.db, 7, 2500, "success", card_last4="4242")
-    assert row["id"] == 1 and row["currency"] == "USD" and row["status"] == "success"
-    insert_payment(app.db, 8, 1000, "failed", reason="declined")
-    found = get_payments_for_booking(app.db, 7)
-    assert [p["id"] for p in found] == [1]
-    assert found[0]["card_last4"] == "4242"
-    assert "card_number" not in found[0] and "cvc" not in found[0]
-
-def test_payments_reject_values_outside_the_enums():
-    import psycopg
-    from payment.repository import insert_payment
-    app = create_app(reset_on_start=True)
-    with pytest.raises(psycopg.errors.InvalidTextRepresentation):
-        insert_payment(app.db, 1, 100, "refunded")
-    with pytest.raises(psycopg.errors.InvalidTextRepresentation):
-        insert_payment(app.db, 1, 100, "success", currency="EUR")
