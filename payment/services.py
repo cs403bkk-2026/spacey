@@ -5,6 +5,8 @@ repository.py, and purchase.booking owns a booking's paid state."""
 import re
 from datetime import datetime, timezone
 
+from payment.responses import error_body
+
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
 EXPIRY_RE = re.compile(r"^(0[1-9]|1[0-2])/(\d{2})$")
@@ -24,25 +26,34 @@ def passes_luhn(card_number: str) -> bool:
     return total % 10 == 0
 
 
-def validate_card(card_number, expiry, cvc) -> str | None:
-    """Returns an error message, or None if the (mocked) card looks valid -
-    right shape, passes the Luhn checksum and not expired. Still no network
-    check: it says nothing about whether the card really exists."""
+def validate_card(card_number, expiry, cvc) -> dict | None:
+    """Error body, or None if the card has the right shape, passes Luhn,
+    and is not expired. No network check."""
     if not isinstance(card_number, str) or not CARD_NUMBER_RE.match(card_number):
-        return "card_number must be 13-19 digits"
+        return error_body(
+            400, "card_number must be 13-19 digits",
+            "invalid_card_number", "/card_number",
+        )
     if not passes_luhn(card_number):
-        return "card_number is not a valid card number"
+        return error_body(
+            400, "card_number is not a valid card number",
+            "invalid_card_number", "/card_number",
+        )
     if not isinstance(cvc, str) or not CVC_RE.match(cvc):
-        return "cvc must be 3 or 4 digits"
+        return error_body(400, "cvc must be 3 or 4 digits", "invalid_cvc", "/cvc")
     if not isinstance(expiry, str):
-        return "expiry must be in MM/YY format"
+        return error_body(
+            400, "expiry must be in MM/YY format", "invalid_expiry", "/expiry",
+        )
     match = EXPIRY_RE.match(expiry)
     if match is None:
-        return "expiry must be in MM/YY format"
+        return error_body(
+            400, "expiry must be in MM/YY format", "invalid_expiry", "/expiry",
+        )
     month, year = int(match.group(1)), 2000 + int(match.group(2))
     now = datetime.now(timezone.utc)
     if (year, month) < (now.year, now.month):
-        return "card has expired"
+        return error_body(400, "card has expired", "card_expired", "/expiry")
     return None
 
 
@@ -53,7 +64,7 @@ def authorize_card(card_number, expiry, cvc, force_failure=False):
     force_failure asks this attempt to fail."""
     card_error = validate_card(card_number, expiry, cvc)
     if card_error:
-        return {"error": card_error}, 400
+        return card_error, 400
     if force_failure:
-        return {"error": "payment failed"}, 402
+        return error_body(402, "payment failed", "payment_failed"), 402
     return None

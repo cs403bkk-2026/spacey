@@ -333,75 +333,7 @@ paths:
         "404":
           $ref: "#/components/responses/BookingNotFound"
 
-  /bookings/{bookingId}/pay:
-    post:
-      tags: [bookings]
-      summary: Pay for a booking (mocked).
-      description: >
-        No real payment provider or network - card details are checked for
-        shape (right length, digits only, expiry not in the past) and the
-        card number must pass the Luhn checksum. There is no network check,
-        so a number that passes may still not be a real card. Only the card's
-        last 4 digits are ever stored or returned; the full number and CVC
-        are never persisted. Paying an already-paid booking is a no-op
-        (no card required for that retry), so a retried request can't
-        charge twice. Pass `force_failure: true` with a still-valid card
-        to make this attempt fail on purpose, for testing the failure
-        path - the booking is left unpaid.
-      parameters:
-        - $ref: "#/components/parameters/BookingId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                card_number:
-                  type: string
-                  description: Digits only, 13-19 characters.
-                  example: "4242424242424242"
-                expiry:
-                  type: string
-                  description: MM/YY, must not be in the past.
-                  example: "12/30"
-                cvc:
-                  type: string
-                  description: Digits only, 3-4 characters.
-                  example: "123"
-                force_failure:
-                  type: boolean
-                  default: false
-              required: [card_number, expiry, cvc]
-      responses:
-        "200":
-          description: Paid (or already was).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Booking" }
-        "400":
-          description: >
-            `card_number must be 13-19 digits`, `card_number is not a
-            valid card number` (fails the Luhn check), `cvc must be 3 or 4
-            digits`, `expiry must be in MM/YY format`, or `card has
-            expired`. Not returned when the booking is already paid.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "402":
-          description: Payment failed (only when `force_failure` was set).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-              example: { error: payment failed }
-        "404":
-          $ref: "#/components/responses/BookingNotFound"
-        "500":
-          description: Database failure during payment; check booking status before retrying.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-              example: { error: payment unavailable }
+  # POST /bookings/{bookingId}/pay is documented in payment/openapi.yaml.
 
   /bookings/{bookingId}/unlock:
     post:

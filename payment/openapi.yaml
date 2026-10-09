@@ -1,0 +1,292 @@
+openapi: 3.0.3
+info:
+  title: Spacey Payment API
+  description: >
+    Payment routes. Everything else is in the repository `openapi.yaml`.
+
+
+    Success returns the booking (`application/json`). Errors return
+    `application/problem+json`: `type`, `title`, `status`, `detail`,
+    `instance`, and `code`. `errors` is set only when one request field
+    is invalid.
+
+
+    Card checks are local. Nothing is sent to a payment provider. Only
+    the last 4 digits are stored.
+  version: "1.0"
+servers:
+  - url: /
+    description: Same host the app is running on (local, container, or the deployed URL).
+
+tags:
+  - name: payments
+    description: Pay for a booking. Mocked; no real card is charged.
+
+paths:
+  /bookings/{bookingId}/pay:
+    post:
+      tags: [payments]
+      operationId: payBooking
+      summary: Pay for a booking (mocked).
+      description: >
+        No real payment provider or network. The card number must be 13-19
+        digits and pass the Luhn checksum, the CVC must be 3 or 4 digits,
+        and the expiry must be `MM/YY` and not in the past. Only the last
+        4 digits are stored or returned; the full number and CVC are never
+        persisted.
+
+
+        Paying an already-paid booking is a no-op and does not need a
+        card, so a retried request cannot charge twice. Pass
+        `force_failure: true` with a still-valid card to fail this attempt
+        on purpose. The booking stays unpaid.
+      parameters:
+        - $ref: "#/components/parameters/BookingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PayRequest" }
+            examples:
+              valid:
+                summary: A shape-valid test card.
+                value:
+                  card_number: "4242424242424242"
+                  expiry: "12/30"
+                  cvc: "123"
+              forceFailure:
+                summary: Valid card, declined on purpose.
+                value:
+                  card_number: "4242424242424242"
+                  expiry: "12/30"
+                  cvc: "123"
+                  force_failure: true
+      responses:
+        "200":
+          description: Paid, or already paid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Booking" }
+              example:
+                id: 1
+                space_id: 1
+                member: annabel
+                paid: true
+                start_time: "2026-09-25T02:00:00+00:00"
+                end_time: "2026-09-25T03:00:00+00:00"
+                amount_cents: 1500
+                user_id: null
+                card_last4: "4242"
+                created_at: "2026-09-24T02:48:20.933270+00:00"
+        "400":
+          description: >
+            The card was rejected before any charge. `detail` is one of
+            `card_number must be 13-19 digits`, `card_number is not a valid
+            card number`, `cvc must be 3 or 4 digits`, `expiry must be in
+            MM/YY format`, or `card has expired`. Not returned when the
+            booking is already paid.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                luhn:
+                  summary: The number fails the Luhn check.
+                  value:
+                    type: about:blank
+                    title: Bad Request
+                    status: 400
+                    detail: card_number is not a valid card number
+                    instance: /bookings/1/pay
+                    code: invalid_card_number
+                    errors:
+                      - pointer: /card_number
+                        detail: card_number is not a valid card number
+                expired:
+                  summary: The expiry is in the past.
+                  value:
+                    type: about:blank
+                    title: Bad Request
+                    status: 400
+                    detail: card has expired
+                    instance: /bookings/1/pay
+                    code: card_expired
+                    errors:
+                      - pointer: /expiry
+                        detail: card has expired
+        "402":
+          description: Payment failed. Only returned when `force_failure` was set.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                type: about:blank
+                title: Payment Required
+                status: 402
+                detail: payment failed
+                instance: /bookings/1/pay
+                code: payment_failed
+        "404":
+          description: No booking with that id.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                type: about:blank
+                title: Not Found
+                status: 404
+                detail: booking not found
+                instance: /bookings/999/pay
+                code: booking_not_found
+        "500":
+          description: >
+            Database failure during payment. Check the booking's status
+            before retrying. This body is not RFC 9457 problem+json.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                required: [error]
+              example: { error: payment unavailable }
+
+components:
+  parameters:
+    BookingId:
+      name: bookingId
+      in: path
+      required: true
+      description: Booking to pay.
+      schema: { type: integer, minimum: 1 }
+      example: 1
+
+  schemas:
+    PayRequest:
+      type: object
+      description: >
+        Required for an unpaid booking. Omitted entirely when paying an
+        already-paid booking again (that call is a no-op).
+      properties:
+        card_number:
+          type: string
+          description: Digits only, 13-19 characters. Must pass the Luhn checksum.
+          example: "4242424242424242"
+        expiry:
+          type: string
+          description: MM/YY, must not be in the past.
+          pattern: "^(0[1-9]|1[0-2])/\\d{2}$"
+          example: "12/30"
+        cvc:
+          type: string
+          description: Digits only, 3-4 characters. Never stored or returned.
+          pattern: "^\\d{3,4}$"
+          example: "123"
+        force_failure:
+          type: boolean
+          default: false
+          description: >
+            When true, and the card is otherwise valid, this attempt fails
+            with 402 and the booking stays unpaid.
+      required: [card_number, expiry, cvc]
+
+    Error:
+      type: object
+      description: Error body. Served as `application/problem+json`.
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Always `about:blank`.
+          example: about:blank
+        title:
+          type: string
+          description: "`Bad Request`, `Payment Required`, or `Not Found`."
+          example: Bad Request
+        status:
+          type: integer
+          description: HTTP status code.
+          example: 400
+        detail:
+          type: string
+          description: What failed on this request.
+          example: card_number is not a valid card number
+        instance:
+          type: string
+          description: Request path.
+          example: /bookings/1/pay
+        code:
+          type: string
+          description: Stable error code.
+          enum:
+            - invalid_card_number
+            - invalid_cvc
+            - invalid_expiry
+            - card_expired
+            - payment_failed
+            - booking_not_found
+        errors:
+          type: array
+          description: Set when a request field is invalid.
+          items: { $ref: "#/components/schemas/FieldError" }
+      required: [type, title, status, detail, instance, code]
+
+    FieldError:
+      type: object
+      properties:
+        pointer:
+          type: string
+          description: JSON Pointer to the invalid field.
+          enum: ["/card_number", "/cvc", "/expiry"]
+        detail:
+          type: string
+          description: Same text as `Error.detail`.
+      required: [pointer, detail]
+
+    Booking:
+      type: object
+      description: Booking after a successful payment. `paid` is true.
+      properties:
+        id: { type: integer, example: 1 }
+        space_id: { type: integer, example: 1 }
+        member: { type: string, example: annabel }
+        paid: { type: boolean, example: true }
+        start_time:
+          type: string
+          format: date-time
+          example: "2026-09-25T02:00:00+00:00"
+        end_time:
+          type: string
+          format: date-time
+          example: "2026-09-25T03:00:00+00:00"
+        amount_cents:
+          type: integer
+          description: >
+            What this booking was charged: the space's per-hour rate times
+            the hours booked, fixed when the booking was made.
+          example: 1500
+        user_id:
+          type: integer
+          nullable: true
+          description: Account logged in when the booking was made, or null for a guest.
+          example: 1
+        card_last4:
+          type: string
+          nullable: true
+          description: Last 4 digits of the card. The full number and CVC are never returned.
+          example: "4242"
+        created_at:
+          type: string
+          format: date-time
+          description: When the booking was made, not when it was paid.
+          example: "2026-09-24T02:48:20.933270+00:00"
+      required:
+        - id
+        - space_id
+        - member
+        - paid
+        - start_time
+        - end_time
+        - amount_cents
+        - user_id
+        - card_last4
+        - created_at

@@ -6,6 +6,7 @@ from psycopg import Error as DatabaseError
 from psycopg.errors import DeadlockDetected, ExclusionViolation
 
 from shared.logger import logger
+from payment.responses import error_body
 from payment.services import authorize_card
 from purchase.member import normalise_member_name, is_subscribed
 
@@ -165,7 +166,7 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
         row = get_booking(cur, booking_id)
         if row is None:
             logger.warning("payment booking_id=%s outcome=not_found", booking_id)
-            return {"error": "booking not found"}, 404
+            return error_body(404, "booking not found", "booking_not_found"), 404
 
         if row["paid"]:
             logger.info("payment booking_id=%s outcome=already_paid", booking_id)
