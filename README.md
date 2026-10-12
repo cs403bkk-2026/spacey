@@ -102,7 +102,7 @@ Quick summary of the JSON API (see [openapi.yaml](openapi.yaml) for the full det
 | GET, DELETE | `/bookings/<id>`               | Get or cancel one booking                                            |
 | POST   | `/bookings/<id>/pay`                | Pay a booking (mocked; `force_failure: true` tests the failure path) |
 | POST   | `/bookings/<id>/unlock`             | Get the access code for a paid booking (mocked lock)                 |
-| POST   | `/members/<name>/subscribe`         | Mocked subscription; a subscriber's bookings are paid on creation    |
+| POST   | `/members/<name>/subscribe`         | Removed; always answers 410                                          |
 | POST   | `/register`                         | Create an account (email + password, hashed)                        |
 | POST   | `/login`, `/logout`                 | Start or end a session                                               |
 | GET    | `/metrics`                          | Business metrics as JSON                                             |
