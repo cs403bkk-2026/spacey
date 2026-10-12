@@ -138,6 +138,22 @@ def get_booking(cur, booking_id) -> dict | None:
     return cur.fetchone()
 
 
+def check_payable(cur, booking_id):
+    """May Payment collect, and how much? Collect only when status is
+    "pending"; "completed" means already paid.
+    Returns ({"id", "amount_cents", "status"}, 200) or ({"error": ...}, 404)."""
+    cur.execute(
+        "SELECT id, amount_cents, "
+        "CASE WHEN paid THEN 'completed' ELSE 'pending' END AS status "
+        "FROM bookings WHERE id = %s",  # a cancel deletes the row here: 404
+        (booking_id,),
+    )
+    facts = cur.fetchone()
+    if facts is None:
+        return {"error": "booking not found"}, 404
+    return facts, 200
+
+
 def mark_paid(cur, booking_id, card_last4) -> dict | None:
     """Flip the booking to paid, keeping only the card's last 4 digits.
     Returns the updated row."""
