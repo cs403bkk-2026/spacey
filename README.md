@@ -93,17 +93,38 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Payment (`payment/`)
 
+Validates mock card details, processes and records mock payments, and returns a success,
+failed or unknown outcome to Purchase. Purchase owns booking prices, booking updates and
+requests to Access.
+
 - **Data:** the `payments` table (migration `001_create_payments.sql`), plus `paid` and
   `card_last4` on `bookings`.
+  Agreed with Purchase: payment inputs are `booking_id`, `amount_cents` (integer USD cents:
+  4500 = $45.00) and the mock card; a success returns `payment_id`, `booking_id`,
+  `amount_cents` and `currency`. How failed attempts and unknown outcomes are stored still
+  needs agreement within Payments.
 - **Rules:** the card needs 13-19 digits, a valid Luhn checksum, a 3-4 digit CVC and an unexpired
   `MM/YY` expiry. Only the last 4 digits are stored. Paying a booking that's already paid returns
   it unchanged. `force_failure: true` returns 402. The provider is mocked.
+  Agreed: after a failure another attempt is allowed; after a success a repeated operation
+  returns the same result without creating another payment. Unknown outcomes are reported
+  separately from failures. Full card numbers and CVCs are never stored or logged, and
+  unknown historical details are preserved. Purchase keeps the booking unpaid and grants no
+  access after a failed or unknown outcome. Implementation still needs checking.
 - **Dependencies:** reads and updates the `bookings` table owned by purchase. `access.py`
   (`/unlock`) and `/metrics` rely on `bookings.paid`.
+  Agreed interface: Purchase sends `booking_id`, `amount_cents`, `currency` (USD),
+  `card_number`, `expiry` and `cvc`; Payments returns success (`payment_id`, `booking_id`,
+  `amount_cents`, `currency`), failure with a reason, or an unknown outcome. After a success
+  Purchase updates its own booking and requests an access code from Access.
 - **Open boundary:** payment writes straight to `bookings` instead of going through purchase,
   even though the migration says "Payment never touches Bookings". The pay flow doesn't record
   anything in `payments` yet (only tests call `insert_payment`), so paid status lives only on
   the booking.
+  To clarify with Purchase (their Product Owner): how repeated operations are identified, how
+  to check an unknown outcome without creating a duplicate payment, the proposed 15-minute
+  reservation limit, what happens if success is confirmed after the reservation expires, and
+  whether mock refunds for cancelled paid bookings belong in the next increment.
 
 ## API reference
 
