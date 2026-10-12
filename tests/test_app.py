@@ -1457,6 +1457,52 @@ def test_payments_reject_values_outside_the_enums():
     from payment.repository import insert_payment
     app = create_app(reset_on_start=True)
     with pytest.raises(psycopg.errors.InvalidTextRepresentation):
-        insert_payment(app.db, 1, 100, "refunded")
+        insert_payment(app.db, 1, 100, "invalid_status")
     with pytest.raises(psycopg.errors.InvalidTextRepresentation):
         insert_payment(app.db, 1, 100, "success", currency="EUR")
+
+
+# --- PT-013: refund on cancellation ---
+
+def test_payments_accept_refunded_status():
+    from payment.repository import insert_payment
+    app = create_app(reset_on_start=True)
+    row = insert_payment(app.db, 1, 100, "refunded")
+    assert row["status"] == "refunded"
+
+
+def test_cancelling_a_paid_booking_records_a_refund():
+    from payment.repository import get_payments_for_booking
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+
+    delete_resp = client.delete(f"/bookings/{created['id']}")
+    assert delete_resp.status_code == 200
+
+    payments = get_payments_for_booking(app.db, created["id"])
+    refunds = [p for p in payments if p["status"] == "refunded"]
+    assert len(refunds) == 1
+    assert refunds[0]["amount_cents"] == created["amount_cents"]
+    assert refunds[0]["card_last4"] == "4242"
+    assert refunds[0]["reason"] == "cancellation"
+
+
+def test_cancelling_an_unpaid_booking_records_no_refund():
+    from payment.repository import get_payments_for_booking
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    delete_resp = client.delete(f"/bookings/{created['id']}")
+    assert delete_resp.status_code == 200
+
+    payments = get_payments_for_booking(app.db, created["id"])
+    refunds = [p for p in payments if p["status"] == "refunded"]
+    assert len(refunds) == 0
+

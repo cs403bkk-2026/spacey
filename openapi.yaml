@@ -322,8 +322,9 @@ paths:
       tags: [bookings]
       summary: Cancel a booking.
       description: >
-        Deletes the booking outright, whether or not it was paid - there is
-        no cancelled/refunded record kept yet (see issue #82).
+        Deletes the booking outright. If the booking was paid, a refund is
+        recorded in the payments table with status 'refunded'.
+
       responses:
         "200":
           description: The booking as it was just before it was deleted.
