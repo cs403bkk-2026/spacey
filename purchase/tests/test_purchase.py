@@ -97,17 +97,11 @@ def test_check_unlockable_unpaid_booking_is_402():
     assert answer == ({"error": "booking is not paid"}, 402)
 
 
-def test_check_unlockable_paid_booking_gives_its_facts():
+def test_check_unlockable_paid_booking_is_allowed():
     app, client, booking = book_through_the_api()
     client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
 
     with app.db.cursor() as cur:
-        facts, status = check_unlockable(cur, booking["id"])
+        answer = check_unlockable(cur, booking["id"])
 
-    assert status == 200
-    assert facts == {
-        "id": booking["id"],
-        "space_id": 1,
-        "start_time": datetime.fromisoformat(booking["start_time"]),
-        "end_time": datetime.fromisoformat(booking["end_time"]),
-    }
+    assert answer is None

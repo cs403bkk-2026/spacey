@@ -138,14 +138,15 @@ def get_booking(cur, booking_id) -> dict | None:
     return cur.fetchone()
 
 
-def check_unlockable(cur, booking_id):
-    """(facts, 200) when paid; otherwise today's /unlock refusal."""
-    row = get_booking(cur, booking_id)  # a cancelled booking reads as None
-    if row is None:
+def check_unlockable(cur, booking_id) -> tuple[dict, int] | None:
+    """Purchase's check before Access issues a code: the booking must exist
+    and be paid. Returns (payload, status) to answer with, or None if fine."""
+    booking = get_booking(cur, booking_id)
+    if booking is None:
         return {"error": "booking not found"}, 404
-    if not row["paid"]:
+    if not booking["paid"]:
         return {"error": "booking is not paid"}, 402
-    return {key: row[key] for key in ("id", "space_id", "start_time", "end_time")}, 200
+    return None
 
 
 def mark_paid(cur, booking_id, card_last4) -> dict | None:
