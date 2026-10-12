@@ -7,7 +7,7 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation
 
 from shared.logger import logger
 from payment.services import authorize_card
-from purchase.member import normalise_member_name, is_subscribed
+from purchase.member import normalise_member_name
 
 BOOKING_COLUMNS = (
     "id, space_id, member, paid, start_time, end_time, "
@@ -30,7 +30,7 @@ def calculate_booking_price_cents(
 ) -> int:
     """Prorate an hourly rate, rounding half cents up.
 
-    The caller supplies a validated interval and handles subscription coverage.
+    The caller supplies a validated interval.
     Duration is truncated to whole seconds, preserving the existing calculation.
     """
     seconds = int((end_time - start_time).total_seconds())
@@ -80,9 +80,7 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
     if cur.fetchone() is not None:
         return {"error": "space is already booked for that time"}, 409
 
-    # Unpaid until POST /bookings/<id>/pay is called - unless the
-    # member subscribes: then it is paid at once and costs nothing extra.
-    subscribed = is_subscribed(cur, member)
+    # Always unpaid at its calculated price.
     try:
         cur.execute(
             "INSERT INTO bookings "
@@ -93,12 +91,10 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
             (
                 space_id,
                 member,
-                subscribed,
+                False,
                 start_time,
                 end_time,
-                0
-                if subscribed
-                else calculate_booking_price_cents(
+                calculate_booking_price_cents(
                     space["price_cents"], start_time, end_time
                 ),
                 user_id,
