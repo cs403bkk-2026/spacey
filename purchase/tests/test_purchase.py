@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -178,11 +179,15 @@ def test_confirmation_pay_route_is_gone():
     assert client.get(f"/bookings/{booking['id']}").get_json()["paid"] is False
 
 
-UNPAID = {"id": 1, "paid": False, "card_last4": None}
+UNPAID = {"id": 1, "paid": False, "card_last4": None, "amount_cents": 2500}
 PAID = {"id": 1, "paid": True, "card_last4": "4242"}
 PENDING = ({"id": 1, "amount_cents": 2500, "status": "pending"}, 200)
 HOLD_EXPIRED = ({"error": "booking hold has expired"}, 409)
 NOT_FOUND = ({"error": "booking not found"}, 404)
+REFUND = {"db": "app.db", "booking_id": 1, "amount_cents": 2500,
+          "card_last4": "4242", "reason": "hold_expired"}
+# Stands in for the cursor: the refund goes to its connection.
+CURSOR = SimpleNamespace(connection="app.db")
 
 
 def pay(monkeypatch, booking=UNPAID, payable=(PENDING,), paid_row=PAID,
@@ -203,6 +208,10 @@ def pay(monkeypatch, booking=UNPAID, payable=(PENDING,), paid_row=PAID,
         calls["mark_paid"] += 1
         return paid_row
 
+    def refund_payment(db, **refund):
+        # Only a refund adds this key, so each `calls ==` check also proves none ran.
+        calls.setdefault("refunds", []).append({"db": db, **refund})
+
     if url is None:
         monkeypatch.delenv("PURCHASE_URL", raising=False)
     else:
@@ -211,8 +220,9 @@ def pay(monkeypatch, booking=UNPAID, payable=(PENDING,), paid_row=PAID,
     monkeypatch.setattr(purchase.booking, "check_payable", check_payable)
     monkeypatch.setattr(purchase.booking, "authorize_card", authorize_card)
     monkeypatch.setattr(purchase.booking, "mark_paid", mark_paid)
+    monkeypatch.setattr(purchase.booking, "refund_payment", refund_payment)
     answer = purchase.booking.mark_booking_paid(
-        None, 1, "4242424242424242", "12/99", "123"
+        CURSOR, 1, "4242424242424242", "12/99", "123"
     )
     return answer, calls
 
@@ -249,7 +259,22 @@ def test_pay_refused_after_the_charge_is_409(monkeypatch):
     answer, calls = pay(monkeypatch, payable=(PENDING, HOLD_EXPIRED), paid_row=None)
 
     assert answer == HOLD_EXPIRED
-    assert calls == {"check_payable": 2, "charge": 1, "mark_paid": 1}
+    assert calls == {"check_payable": 2, "charge": 1, "mark_paid": 1,
+                     "refunds": [REFUND]}
+
+
+@pytest.mark.parametrize(
+    ("amount_cents", "refusal", "refunds"),
+    [(2500, NOT_FOUND, [REFUND]), (0, HOLD_EXPIRED, None)],
+    ids=["cancelled_since", "free"],
+)
+def test_pay_refusal_refunds_what_was_charged(monkeypatch, amount_cents, refusal, refunds):
+    booking = {**UNPAID, "amount_cents": amount_cents}
+    answer, calls = pay(
+        monkeypatch, booking=booking, payable=(PENDING, refusal), paid_row=None)
+
+    assert answer == refusal
+    assert calls.get("refunds") == refunds
 
 
 @pytest.mark.parametrize(

@@ -204,7 +204,7 @@ def test_pay_unknown_booking_is_404(stub, hub, monkeypatch):
     assert charged == []
 
 
-def test_pay_refused_after_the_charge_is_409(stub, hub, monkeypatch):
+def test_pay_refused_after_the_charge_is_409_via_service(stub, hub, monkeypatch):
     stub.answer("GET", "/bookings/1", 200, BOOKING)
     stub.answer("GET", "/bookings/1/payable", 200, PAYABLE)
 
@@ -213,8 +213,16 @@ def test_pay_refused_after_the_charge_is_409(stub, hub, monkeypatch):
         stub.answer("POST", "/bookings/1/paid", 409, err("booking hold has expired"))
 
     monkeypatch.setattr("purchase.booking.authorize_card", charge_then_expire)
+    refunds = []
+    monkeypatch.setattr(
+        "purchase.booking.refund_payment", lambda conn, **kwargs: refunds.append(kwargs)
+    )
 
     response = hub.post("/bookings/1/pay", json=VALID_CARD)
 
     assert (response.status_code, response.get_json()) == (
         409, err("booking hold has expired"))
+    assert refunds == [{
+        "booking_id": 1, "amount_cents": 2500, "card_last4": "4242",
+        "reason": "hold_expired",
+    }]

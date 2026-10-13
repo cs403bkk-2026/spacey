@@ -8,6 +8,7 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation
 
 from shared.logger import logger
 from payment.services import authorize_card
+from payment.services import refund_payment
 from purchase import client
 from purchase.member import normalise_member_name
 
@@ -229,9 +230,18 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
             logger.warning("payment booking_id=%s outcome=%s", booking_id, outcome)
             return rejected
 
+        booking = row  # mark_paid replaces row; the refund needs the amount
         row = mark_paid(cur, booking_id, card_number[-4:])
         if row is None and use_service:  # the service refused the late payment
             logger.warning("payment booking_id=%s outcome=refused", booking_id)
+            if booking["amount_cents"] > 0:  # as on cancel: a refund of 0 fails
+                refund_payment(
+                    cur.connection,
+                    booking_id=booking_id,
+                    amount_cents=booking["amount_cents"],
+                    card_last4=card_number[-4:],
+                    reason="hold_expired",
+                )
             return check_payable(cur, booking_id)  # 409 (or 404), never a 500
         logger.info("payment booking_id=%s outcome=succeeded", booking_id)
         return row, 200
