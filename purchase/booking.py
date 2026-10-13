@@ -44,7 +44,6 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
     """Book a space for a member; user_id is the logged-in account or None.
     member is the name as sent: trimmed, "guest" if missing or blank.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
-    # create_booking
     if client.enabled():
         payload, status = client.create_booking(
             space_id, member, start_time, end_time, party_size, user_id)
@@ -190,7 +189,6 @@ def check_unlockable(cur, booking_id) -> tuple[dict, int] | None:
 def mark_paid(cur, booking_id, card_last4) -> dict | None:
     """Flip the booking to paid, keeping only the card's last 4 digits.
     Returns the updated row."""
-    # mark_paid
     if client.enabled():
         row = client.mark_paid(booking_id, card_last4)
         if row is not None:
@@ -262,7 +260,6 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
 
 def cancel_booking(cur, booking_id) -> dict | None:
     """Delete a booking (its access code goes with it); None if not found."""
-    # cancel_booking
     if client.enabled():
         row = client.cancel_booking(booking_id)
         if row is not None:

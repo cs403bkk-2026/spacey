@@ -23,7 +23,9 @@ WINDOW = {"start_time": BOOKING["start_time"], "end_time": BOOKING["end_time"]}
 LOG = "purchase mirror failed: %s (%s)"
 
 # spacey-purchase scripts/freeze.sql and unfreeze.sql, as of commit 47cb13e
-FREEZE = """
+FREEZE = """\
+-- Refuse every write to spacey's old Purchase tables, except in a transaction
+-- that ran SET LOCAL purchase.mirror = 'on'. Safe to run twice.
 CREATE OR REPLACE FUNCTION purchase_refuse_write() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -48,7 +50,9 @@ BEGIN
     END LOOP;
 END $$;
 """
-UNFREEZE = """
+UNFREEZE = """\
+-- Remove the freeze that freeze.sql adds, so the old tables take every write
+-- again. Safe to run twice.
 DROP TRIGGER IF EXISTS purchase_frozen ON users;
 DROP TRIGGER IF EXISTS purchase_frozen_truncate ON users;
 DROP TRIGGER IF EXISTS purchase_frozen ON spaces;
@@ -265,12 +269,12 @@ def test_the_mirror_uses_its_own_connection_and_reopens_it(
     assert mirror._conn is not hub.application.db
 
     old("DELETE FROM bookings")
-    mirror._conn.close()  # as after a database restart
+    old("SELECT pg_terminate_backend(%s, 5000)", (mirror._conn.info.backend_pid,))  # a restart
     assert book(hub).status_code == 201
     assert old_ids() == [1]
 
     old("DELETE FROM bookings")
-    mirror._conn.close()
+    old("SELECT pg_terminate_backend(%s, 5000)", (mirror._conn.info.backend_pid,))
     port = urlparse(closed_port_url()).port  # that helper returns an HTTP URL
     hub.application.config["DATABASE_URL"] = (
         f"postgresql://spacey:spacey@127.0.0.1:{port}/spacey")

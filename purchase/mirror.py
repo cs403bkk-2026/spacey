@@ -36,13 +36,22 @@ def _write(what, *statements):
     global _conn
     try:
         with _lock:
-            if _conn is None or _conn.closed:
-                _conn = psycopg.connect(
-                    current_app.config["DATABASE_URL"], autocommit=True)
-            with _conn.transaction():
-                _conn.execute("SET LOCAL purchase.mirror = 'on'")
-                for sql, params in statements:
-                    _conn.execute(sql, params)
+            for attempt in (1, 2):
+                if _conn is None or _conn.closed:
+                    _conn = psycopg.connect(
+                        current_app.config["DATABASE_URL"], autocommit=True)
+                try:
+                    with _conn.transaction():
+                        _conn.execute("SET LOCAL purchase.mirror = 'on'")
+                        for sql, params in statements:
+                            _conn.execute(sql, params)
+                    return
+                except psycopg.OperationalError:
+                    # A connection the server dropped (restart) is found dead
+                    # only on use: reopen it once. Every write here is
+                    # idempotent, so a repeat after a lost COMMIT is harmless.
+                    if attempt == 2 or not _conn.closed:
+                        raise
     except Exception as error:  # never fail a request the service committed
         # The type only: a database error's text can carry row values.
         logger.error("purchase mirror failed: %s (%s)", what, type(error).__name__)

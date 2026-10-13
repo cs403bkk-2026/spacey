@@ -107,7 +107,7 @@ def create_app(
 
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
-    app.config["DATABASE_URL"] = database_url
+    app.config["DATABASE_URL"] = database_url  # purchase/mirror.py's connection
     app.db = get_connection(database_url)
     app.register_blueprint(booking_bp)
     purchase.client.init_app(app)
