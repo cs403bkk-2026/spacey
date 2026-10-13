@@ -142,8 +142,14 @@ OLD_BOOKING = {
 }
 USER = {"id": 1, "email": "annabel@example.com"}
 PAYABLE = {"id": 1, "amount_cents": 2500, "status": "pending"}
-METRICS = {"spaces": 1, "bookings": 2, "revenue_by_space": [
-    {"id": 1, "name": "Founders Desk", "revenue_cents": 2500}]}
+METRICS = {
+    "spaces": 1, "bookings": 2, "paid_bookings": 1, "unpaid_bookings": 1,
+    "members": 1, "revenue_cents": 2500, "utilization": 0.01,
+    "repeat_member_rate": 1, "payment_conversion": 0.5,
+    "avg_revenue_cents_per_paid_booking": 2500,
+    "revenue_by_space": [{"id": 1, "name": "Founders Desk", "revenue_cents": 2500}],
+}
+NEW_SPACE = {"id": 2, "name": "Meeting Room A", "capacity": 6, "price_cents": 1500}
 SPACE_LIST = {"spaces": [{**SPACE, "available": True}]}
 BOOKINGS = {"bookings": [BOOKING]}
 
@@ -153,8 +159,8 @@ SUCCESS = [
     ("get_space", (1,), "GET", "/spaces/1", 200, {**SPACE, "available": True}, SPACE),
     ("booked_space_ids", (None,), "GET", "/spaces/booked-ids", 200,
      {"space_ids": [1, 3]}, {1, 3}),
-    ("create_space", ("Founders Desk", 1, 2500), "POST", "/spaces", 201, SPACE,
-     (SPACE, 201)),
+    ("create_space", ("Meeting Room A", 6, 1500), "POST", "/spaces", 201, NEW_SPACE,
+     (NEW_SPACE, 201)),
     ("update_space", (1, {"price_cents": 2000}), "PATCH", "/spaces/1", 200,
      {**SPACE, "price_cents": 2000}, ({**SPACE, "price_cents": 2000}, 200)),
     ("delete_space", (1,), "DELETE", "/spaces/1", 204, None, (None, 204)),
@@ -207,8 +213,8 @@ FAILURES = [
     ("mark_paid", (1, "4242"), "POST", "/bookings/1/paid", 409,
      err("booking hold has expired")),
     ("cancel_booking", (1,), "DELETE", "/bookings/1", 404, err("booking not found")),
-    ("create_space", ("", 1, 0), "POST", "/spaces", 400, err("name must not be empty")),
-    ("update_space", (1, {}), "PATCH", "/spaces/1", 400, err("provide something")),
+    ("create_space", ("", 1, 0), "POST", "/spaces", 400, err("name and capacity are required")),
+    ("update_space", (1, {}), "PATCH", "/spaces/1", 400, err("provide name, capacity and/or price_cents to update")),
     ("update_space", (1, {"name": "x"}), "PATCH", "/spaces/1", 404,
      err("space not found")),
     ("delete_space", (1,), "DELETE", "/spaces/1", 404, err("space not found")),
@@ -221,7 +227,7 @@ FAILURES = [
     ("authenticate", ("a@b.co", "no"), "POST", "/users/authenticate", 401,
      err("invalid email or password")),
     ("create_booking", (1, "a", START, END, 0, None), "POST", "/spaces/1/bookings",
-     400, err("party_size must be a whole number of at least 1")),
+     400, err("start_time and end_time are required (ISO 8601 with timezone)")),
     ("create_booking", (9, "a", START, END, 1, None), "POST", "/spaces/9/bookings",
      404, err("space not found")),
     ("create_booking", (1, "a", START, END, 1, None), "POST", "/spaces/1/bookings",
@@ -332,7 +338,7 @@ def test_raw_values_sent(stub):
         datetime.fromisoformat("2030-01-01T12:00:00+07:00"),
     )
     stub.answer("GET", "/spaces/booked-ids", 200, {"space_ids": []})
-    stub.answer("PATCH", "/spaces/1", 400, err("name must not be empty"))
+    stub.answer("PATCH", "/spaces/1", 400, err("name and capacity are required"))
     stub.answer("POST", "/spaces/1/bookings", 400, err("member must be a string"))
 
     client.booked_space_ids(window)

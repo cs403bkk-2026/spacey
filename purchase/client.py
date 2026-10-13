@@ -42,7 +42,7 @@ def call(method, path, body=None, params=None, expect=(200,)):
             "Content-Type": "application/json"})
         try:
             # One try, no retry: a write whose answer was lost may have
-            # committed, so a retry could book or charge twice.
+            # committed, so a retry could book twice.
             with urlopen(request, timeout=TIMEOUT_S) as response:
                 status, raw = response.status, response.read()
         except HTTPError as error:  # 4xx/5xx carry the answer
