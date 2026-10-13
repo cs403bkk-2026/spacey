@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import purchase.booking
 from app import create_app
 from purchase.booking import (
     calculate_booking_price_cents,
@@ -175,3 +176,89 @@ def test_confirmation_pay_route_is_gone():
 
     assert response.status_code == 404
     assert client.get(f"/bookings/{booking['id']}").get_json()["paid"] is False
+
+
+UNPAID = {"id": 1, "paid": False, "card_last4": None}
+PAID = {"id": 1, "paid": True, "card_last4": "4242"}
+PENDING = ({"id": 1, "amount_cents": 2500, "status": "pending"}, 200)
+HOLD_EXPIRED = ({"error": "booking hold has expired"}, 409)
+NOT_FOUND = ({"error": "booking not found"}, 404)
+
+
+def pay(monkeypatch, booking=UNPAID, payable=(PENDING,), paid_row=PAID,
+        url="http://purchase.test"):
+    """Run mark_booking_paid with every step stubbed. check_payable gives the
+    `payable` answers in order. Returns (answer, number of calls per step)."""
+    calls = {"check_payable": 0, "charge": 0, "mark_paid": 0}
+    answers = iter(payable)
+
+    def check_payable(cur, booking_id):
+        calls["check_payable"] += 1
+        return next(answers)
+
+    def authorize_card(*args):
+        calls["charge"] += 1  # returns None: the card is accepted
+
+    def mark_paid(cur, booking_id, card_last4):
+        calls["mark_paid"] += 1
+        return paid_row
+
+    if url is None:
+        monkeypatch.delenv("PURCHASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("PURCHASE_URL", url)
+    monkeypatch.setattr(purchase.booking, "get_booking", lambda cur, i: booking)
+    monkeypatch.setattr(purchase.booking, "check_payable", check_payable)
+    monkeypatch.setattr(purchase.booking, "authorize_card", authorize_card)
+    monkeypatch.setattr(purchase.booking, "mark_paid", mark_paid)
+    answer = purchase.booking.mark_booking_paid(
+        None, 1, "4242424242424242", "12/99", "123"
+    )
+    return answer, calls
+
+
+@pytest.mark.parametrize(
+    ("payable", "expected", "charges"),
+    [
+        (HOLD_EXPIRED, HOLD_EXPIRED, 0),
+        (NOT_FOUND, NOT_FOUND, 0),
+        (PENDING, (PAID, 200), 1),
+    ],
+    ids=["expired", "cancelled_since", "pending"],
+)
+def test_pay_checks_the_hold_before_the_card(monkeypatch, payable, expected, charges):
+    answer, calls = pay(monkeypatch, payable=(payable,))
+
+    assert answer == expected
+    assert calls == {"check_payable": 1, "charge": charges, "mark_paid": charges}
+
+
+@pytest.mark.parametrize(
+    ("booking", "expected"),
+    [(PAID, (PAID, 200)), (None, NOT_FOUND)],
+    ids=["already_paid", "unknown"],
+)
+def test_pay_answers_paid_or_unknown_before_the_check(monkeypatch, booking, expected):
+    answer, calls = pay(monkeypatch, booking=booking)
+
+    assert answer == expected
+    assert calls == {"check_payable": 0, "charge": 0, "mark_paid": 0}
+
+
+def test_pay_refused_after_the_charge_is_409(monkeypatch):
+    answer, calls = pay(monkeypatch, payable=(PENDING, HOLD_EXPIRED), paid_row=None)
+
+    assert answer == HOLD_EXPIRED
+    assert calls == {"check_payable": 2, "charge": 1, "mark_paid": 1}
+
+
+@pytest.mark.parametrize(
+    ("url", "paid_row"),
+    [(None, PAID), ("", PAID), (None, None)],
+    ids=["unset", "empty", "unset_row_gone"],
+)
+def test_pay_without_purchase_url_is_unchanged(monkeypatch, url, paid_row):
+    answer, calls = pay(monkeypatch, payable=(), paid_row=paid_row, url=url)
+
+    assert answer == (paid_row, 200)
+    assert calls == {"check_payable": 0, "charge": 1, "mark_paid": 1}
