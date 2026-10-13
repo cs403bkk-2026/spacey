@@ -95,6 +95,7 @@ def reset_tables(conn: psycopg.Connection) -> None:
             "TRUNCATE access, bookings, spaces, subscriptions, users, payments "
             "RESTART IDENTITY CASCADE"
         )
+    purchase.client.reset_for_tests()
 
 
 def create_app(
