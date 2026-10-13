@@ -125,6 +125,7 @@ def test_link_down(stub, hub, monkeypatch):
         ("delete", "/bookings/1", None),
         ("get", "/me/bookings", None),
         ("post", "/bookings/1/pay", VALID_CARD),
+        ("post", "/bookings/1/unlock", None),
         ("get", "/metrics", None),
     ]
 
