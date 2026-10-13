@@ -3,7 +3,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app import create_app
-from purchase.booking import calculate_booking_price_cents, check_unlockable
+from purchase.booking import (
+    calculate_booking_price_cents,
+    check_payable,
+    check_unlockable,
+)
 from purchase.member import is_valid_email, is_valid_password
 
 # A mocked, obviously-fake card - always valid, never a real payment.
@@ -105,3 +109,69 @@ def test_check_unlockable_paid_booking_is_allowed():
         answer = check_unlockable(cur, booking["id"])
 
     assert answer is None
+
+
+def test_check_payable_unpaid_booking_is_pending():
+    app, _, booking = book_through_the_api()
+
+    with app.db.cursor() as cur:
+        result = check_payable(cur, booking["id"])
+
+    assert result == (
+        {
+            "id": booking["id"],
+            "amount_cents": booking["amount_cents"],
+            "status": "pending",
+        },
+        200,
+    )
+
+
+def test_check_payable_paid_booking_is_completed():
+    app, client, booking = book_through_the_api()
+    client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
+
+    with app.db.cursor() as cur:
+        result = check_payable(cur, booking["id"])
+
+    assert result == (
+        {
+            "id": booking["id"],
+            "amount_cents": booking["amount_cents"],
+            "status": "completed",
+        },
+        200,
+    )
+
+
+def an_unknown_id(client, booking):
+    return booking["id"] + 999
+
+
+def a_cancelled_id(client, booking):
+    client.delete(f"/bookings/{booking['id']}")
+    return booking["id"]
+
+
+@pytest.mark.parametrize(
+    "missing_id", [an_unknown_id, a_cancelled_id], ids=["unknown_id", "cancelled"]
+)
+def test_check_payable_missing_booking_is_404(missing_id):
+    app, client, booking = book_through_the_api()
+    booking_id = missing_id(client, booking)
+
+    with app.db.cursor() as cur:
+        result = check_payable(cur, booking_id)
+
+    assert result == ({"error": "booking not found"}, 404)
+
+
+def test_confirmation_pay_route_is_gone():
+    _, client, booking = book_through_the_api()
+
+    response = client.post(
+        f"/bookings/{booking['id']}/confirmation/pay", data=VALID_CARD
+    )
+
+    assert response.status_code == 404
+    assert client.get(f"/bookings/{booking['id']}").get_json()["paid"] is False
