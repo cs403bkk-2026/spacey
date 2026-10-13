@@ -1,5 +1,6 @@
 """Booking helpers: pricing, booking a space and finding bookings."""
 
+import os
 from datetime import datetime, timezone
 
 from psycopg import Error as DatabaseError
@@ -194,6 +195,17 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
             logger.info("payment booking_id=%s outcome=already_paid", booking_id)
             return row, 200
 
+        # ADR 0003: Purchase checks the hold before the card is charged.
+        # Only the service has the 15-minute hold, so the check runs only with
+        # PURCHASE_URL set. Unset, /pay behaves exactly as before.
+        use_service = bool(os.getenv("PURCHASE_URL"))
+        if use_service:
+            facts, status = check_payable(cur, booking_id)
+            if status != 200:  # 409: the hold has expired; 404: cancelled since
+                outcome = "hold_expired" if status == 409 else "not_found"
+                logger.warning("payment booking_id=%s outcome=%s", booking_id, outcome)
+                return facts, status
+
         rejected = authorize_card(card_number, expiry, cvc, force_failure)
         if rejected:
             outcome = "invalid_card" if rejected[1] == 400 else "failed"
@@ -201,6 +213,9 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
             return rejected
 
         row = mark_paid(cur, booking_id, card_number[-4:])
+        if row is None and use_service:  # the service refused the late payment
+            logger.warning("payment booking_id=%s outcome=refused", booking_id)
+            return check_payable(cur, booking_id)  # 409 (or 404), never a 500
         logger.info("payment booking_id=%s outcome=succeeded", booking_id)
         return row, 200
     except DatabaseError:

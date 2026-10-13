@@ -214,6 +214,10 @@ paths:
       description: >
         Unpaid on creation, at the calculated price. `POST
         /bookings/{bookingId}/pay` is needed before `.../unlock` works.
+        With the Purchase service (`PURCHASE_URL` set), an unpaid booking
+        holds its slot for 15 minutes from creation (SP-R07). After that,
+        another booking may take the slot, and `POST
+        /bookings/{bookingId}/pay` answers 409.
       requestBody:
         required: true
         content:
@@ -345,7 +349,10 @@ paths:
         (no card required for that retry), so a retried request can't
         charge twice. Pass `force_failure: true` with a still-valid card
         to make this attempt fail on purpose, for testing the failure
-        path - the booking is left unpaid.
+        path - the booking is left unpaid. With the Purchase service
+        (`PURCHASE_URL` set), the booking's 15-minute hold (SP-R07) is
+        checked before the card: once it has expired, the answer is 409 and
+        the card is not charged (ADR 0003).
       parameters:
         - $ref: "#/components/parameters/BookingId"
       requestBody:
@@ -394,6 +401,16 @@ paths:
               example: { error: payment failed }
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "409":
+          description: >
+            The booking's 15-minute hold has expired; book again. Only with
+            the Purchase service. Rarely, the hold runs out while the card is
+            being charged and another booking takes the slot: the answer is
+            also 409, and the booking stays unpaid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: booking hold has expired }
         "500":
           description: Database failure during payment; check booking status before retrying.
           content:
