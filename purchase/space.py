@@ -1,6 +1,6 @@
 """Space helpers: validating, storing and finding which spaces are booked."""
 
-from purchase import client
+from purchase import client, mirror
 
 
 def is_valid_capacity(capacity) -> bool:
@@ -61,7 +61,10 @@ def create_space(cur, name, capacity, price_cents):
     """Add a space after checking its fields; the name is stored trimmed.
     Returns (payload, status) - the new space, or an {"error": ...}."""
     if client.enabled():
-        return client.create_space(name, capacity, price_cents)
+        payload, status = client.create_space(name, capacity, price_cents)
+        if status == 201:
+            mirror.space(payload)
+        return payload, status
     if name is None or capacity is None:
         return {"error": "name and capacity are required"}, 400
     if not is_valid_name(name):
@@ -85,7 +88,10 @@ def update_space(cur, space_id, fields):
     rejected - so this needs the body itself, not just its values.
     Returns (payload, status) - the updated space, or an {"error": ...}."""
     if client.enabled():
-        return client.update_space(space_id, fields)
+        payload, status = client.update_space(space_id, fields)
+        if status == 200:
+            mirror.space(payload)
+        return payload, status
     if not any(field in fields for field in ("name", "capacity", "price_cents")):
         return {"error": "provide name, capacity and/or price_cents to update"}, 400
     if get_space(cur, space_id) is None:
@@ -120,7 +126,10 @@ def delete_space(cur, space_id):
     """Delete a space, refused while it still has bookings.
     Returns (payload, status) - payload is None once deleted."""
     if client.enabled():
-        return client.delete_space(space_id)
+        payload, status = client.delete_space(space_id)
+        if status == 204:
+            mirror.delete_space(space_id)
+        return payload, status
     if get_space(cur, space_id) is None:
         return {"error": "space not found"}, 404
     cur.execute(
