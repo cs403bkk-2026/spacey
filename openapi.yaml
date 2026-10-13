@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Spacey API
   description: >
-    A space booking system: find a space, book it, pay once or subscribe,
+    A space booking system: find a space, book it, pay for it,
     and get access through a mocked lock.
 
 
@@ -212,11 +212,8 @@ paths:
       tags: [bookings]
       summary: Book a space.
       description: >
-        Unpaid on creation, unless `member` has an active subscription (see
-        `POST /members/{name}/subscribe`), in which case it is created
-        already paid and costs nothing extra. A later `POST
-        /bookings/{bookingId}/pay` is needed otherwise, before `.../unlock`
-        will work.
+        Unpaid on creation, at the calculated price. `POST
+        /bookings/{bookingId}/pay` is needed before `.../unlock` works.
       requestBody:
         required: true
         content:
@@ -436,13 +433,8 @@ paths:
   /members/{name}/subscribe:
     post:
       tags: [members]
-      summary: Subscribe a member (mocked).
-      description: >
-        No real provider and no price yet (see issue #112). Subscribing
-        again is a no-op: `started_at` does not change. The name is matched
-        trimmed and lower-cased, so "Annabel" and " annabel " are the same
-        subscriber. While active, every booking that member makes is
-        created already paid, at no extra charge.
+      summary: Removed; always answers 410.
+      deprecated: true
       parameters:
         - name: name
           in: path
@@ -450,26 +442,12 @@ paths:
           schema: { type: string }
           example: annabel
       responses:
-        "200":
-          description: Subscribed (or already was).
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  member:
-                    type: string
-                    description: Trimmed and lower-cased.
-                    example: annabel
-                  active: { type: boolean, example: true }
-                  started_at: { type: string, format: date-time }
-                required: [member, active, started_at]
-        "400":
-          description: The name is blank after trimming.
+        "410":
+          description: Subscriptions have been removed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { error: "member name must not be blank" }
+              example: { error: "subscriptions have been removed" }
 
   /register:
     post:
@@ -722,7 +700,7 @@ components:
             What this booking was actually charged: the space's per-hour
             rate times the hours booked, fixed at the price when it was
             made (see issue #78) - a later price change does not affect
-            it. 0 for a subscriber's booking.
+            it. 0 on old bookings a subscription covered.
           example: 1500
         user_id:
           type: integer
