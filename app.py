@@ -12,6 +12,7 @@ from payment.migrations import run_migrations
 from payment.services import refund_payment
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
+import purchase.client
 import purchase.member
 import purchase.metrics
 import purchase.schema
@@ -107,6 +108,7 @@ def create_app(
     app.secret_key = SECRET_KEY
     app.db = get_connection(database_url)
     app.register_blueprint(booking_bp)
+    purchase.client.init_app(app)
     if reset_on_start:
         reset_tables(app.db)
     with app.db.cursor() as cur:

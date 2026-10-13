@@ -16,4 +16,5 @@ COPY shared/ shared/
 
 EXPOSE 8000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
+# 4 threads share app.db: never open a transaction on it; use a separate connection.
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--threads", "4", "app:app"]
