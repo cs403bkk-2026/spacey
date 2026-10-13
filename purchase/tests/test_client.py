@@ -54,10 +54,6 @@ class Stub:
     def answer(self, method, path, status, body=None):
         self.answers[(method, path)] = (status, body)
 
-    def reset(self):
-        self.requests.clear()
-        self.answers.clear()
-
 
 @pytest.fixture
 def stub(monkeypatch):
@@ -108,16 +104,16 @@ def stub(monkeypatch):
     server.server_close()
 
 
-def test_url_switch(monkeypatch):
-    results = []
-    monkeypatch.delenv("PURCHASE_URL", raising=False)
-    results.append(client.enabled())
-    monkeypatch.setenv("PURCHASE_URL", "")
-    results.append(client.enabled())
-    monkeypatch.setenv("PURCHASE_URL", "http://purchase:8000")
-    results.append(client.enabled())
+@pytest.mark.parametrize("url,expected", [
+    (None, False), ("", False), ("http://purchase:8000", True),
+], ids=["unset", "empty", "set"])
+def test_url_switch(monkeypatch, url, expected):
+    if url is None:
+        monkeypatch.delenv("PURCHASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("PURCHASE_URL", url)
 
-    assert results == [False, False, True]
+    assert client.enabled() is expected
 
 
 def test_call_sends_token_and_json(stub):
@@ -255,33 +251,50 @@ def test_not_found_and_domain_errors(stub, name, args, method, path, status, ans
     assert result == (None if name in NONE_ON_ERROR else (answer, status))
 
 
-def stub_booking_answer(stub, status, body):
-    stub.answer("GET", "/bookings/1", status, body)
+def answered(status, body):
+    return lambda stub, monkeypatch: stub.answer("GET", "/bookings/1", status, body)
 
 
-@pytest.mark.parametrize("status,body", [
-    (401, err("invalid service token")),
-    (403, err("invalid service token")),
-    (500, err("boom")),
-    (502, "Bad Gateway"),
-    (404, "Not Found"),  # text, not JSON: a missing route, not a missing booking
-    (200, {}),
-], ids=["401", "403", "500", "text-502", "text-404", "200-empty"])
-def test_link_failures_raise(stub, status, body):
-    stub_booking_answer(stub, status, body)
+def pointed_at(url):
+    return lambda stub, monkeypatch: monkeypatch.setenv("PURCHASE_URL", url())
+
+
+LINK_FAILURES = {
+    "401": answered(401, err("invalid service token")),
+    "403": answered(403, err("invalid service token")),
+    "500": answered(500, err("boom")),
+    "text-502": answered(502, "Bad Gateway"),
+    "text-404": answered(404, "Not Found"),  # a missing route, not a missing booking
+    "200-empty": answered(200, {}),
+    "closed-port": pointed_at(closed_port_url),
+    "no-scheme": pointed_at(lambda: "spacey-purchase:8000"),
+    "no-value": pointed_at(lambda: "<no value>"),
+}
+
+
+@pytest.mark.parametrize("break_link", LINK_FAILURES.values(), ids=LINK_FAILURES)
+def test_link_failures_raise(stub, monkeypatch, break_link):
+    break_link(stub, monkeypatch)
 
     with pytest.raises(client.PurchaseUnavailable):
         client.get_booking(1)
 
 
-@pytest.mark.parametrize("url", [
-    closed_port_url, lambda: "spacey-purchase:8000", lambda: "<no value>",
-], ids=["closed-port", "no-scheme", "no-value"])
-def test_link_failures_raise_on_a_bad_url(monkeypatch, url):
-    monkeypatch.setenv("PURCHASE_URL", url())
+MALFORMED = {
+    "ids-not-a-list": ("booked_space_ids", (None,), "/spaces/booked-ids", {"space_ids": 5}),
+    "ids-unhashable": ("booked_space_ids", (None,), "/spaces/booked-ids", {"space_ids": [[1]]}),
+    "list-not-a-list": ("list_bookings", (), "/bookings", {"bookings": "x"}),
+    "metrics-not-an-object": ("compute_metrics", (), "/metrics", []),
+    "bad-time": ("get_booking", (1,), "/bookings/1", {**BOOKING, "created_at": "soon"}),
+}
+
+
+@pytest.mark.parametrize("name,args,path,payload", MALFORMED.values(), ids=MALFORMED)
+def test_malformed_answers_raise(stub, name, args, path, payload):
+    stub.answer("GET", path, 200, payload)
 
     with pytest.raises(client.PurchaseUnavailable):
-        client.get_booking(1)
+        getattr(client, name)(*args)
 
 
 def test_timeout_no_retry(monkeypatch):
@@ -307,6 +320,8 @@ def test_timeout_no_retry(monkeypatch):
     elapsed = time.monotonic() - started
     time.sleep(0.2)  # a retry would connect again within this time
     listener.close()
+    for connection in accepted:
+        connection.close()
     assert elapsed < 2
     assert len(accepted) == 1
 

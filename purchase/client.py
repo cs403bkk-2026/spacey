@@ -90,13 +90,7 @@ def shaped(payload, status, ok, shape):
     return (shape(payload) if status == ok else payload), status
 
 
-def create_space(name, capacity, price_cents):
-    body = {"name": name, "capacity": capacity, "price_cents": price_cents}
-    payload, status = call("POST", "/spaces", body, expect=(201, 400))
-    return shaped(payload, status, 201, space_row)
-
-
-def rows(payload, key, shape) -> list:
+def row_list(payload, key, shape) -> list:
     items = field(payload, key)
     if not isinstance(items, list):
         raise PurchaseUnavailable(f"{key!r} is not a list")
@@ -111,11 +105,9 @@ def payable_row(data) -> dict:
     return {key: field(data, key) for key in ("id", "amount_cents", "status")}
 
 
-# --- space ---
-
 def list_spaces() -> list:
     payload, _ = call("GET", "/spaces")
-    return rows(payload, "spaces", space_row)
+    return row_list(payload, "spaces", space_row)
 
 
 def get_space(space_id) -> dict | None:
@@ -124,10 +116,22 @@ def get_space(space_id) -> dict | None:
 
 
 def booked_space_ids(window) -> set:
-    params = None if window is None else {
-        "start_time": window[0].isoformat(), "end_time": window[1].isoformat()}
+    """Ids of the booked spaces; window is (start, end) datetimes, or None for now."""
+    params = None
+    if window is not None:
+        start, end = window
+        params = {"start_time": start.isoformat(), "end_time": end.isoformat()}
     payload, _ = call("GET", "/spaces/booked-ids", params=params)
-    return set(field(payload, "space_ids"))
+    try:
+        return set(field(payload, "space_ids"))
+    except TypeError:  # not a list, or ids that are not plain values
+        raise PurchaseUnavailable("bad 'space_ids'") from None
+
+
+def create_space(name, capacity, price_cents):
+    body = {"name": name, "capacity": capacity, "price_cents": price_cents}
+    payload, status = call("POST", "/spaces", body, expect=(201, 400))
+    return shaped(payload, status, 201, space_row)
 
 
 def update_space(space_id, fields):
@@ -139,8 +143,6 @@ def update_space(space_id, fields):
 def delete_space(space_id):
     return call("DELETE", f"/spaces/{space_id}", expect=(204, 404, 409))
 
-
-# --- member ---
 
 def register_user(email, password):
     payload, status = call(
@@ -156,8 +158,6 @@ def authenticate(email, password):
     return shaped(payload, status, 200, user_row)
 
 
-# --- booking ---
-
 def create_booking(space_id, member, start_time, end_time, party_size, user_id):
     body = {
         "member": member, "start_time": start_time.isoformat(),
@@ -170,17 +170,17 @@ def create_booking(space_id, member, start_time, end_time, party_size, user_id):
 
 def list_bookings() -> list:
     payload, _ = call("GET", "/bookings")
-    return rows(payload, "bookings", booking_row)
+    return row_list(payload, "bookings", booking_row)
 
 
 def list_space_bookings(space_id) -> list:
     payload, _ = call("GET", f"/spaces/{space_id}/bookings")
-    return rows(payload, "bookings", booking_row)
+    return row_list(payload, "bookings", booking_row)
 
 
 def list_user_bookings(user_id) -> list:
     payload, _ = call("GET", f"/users/{user_id}/bookings")
-    return rows(payload, "bookings", booking_row)
+    return row_list(payload, "bookings", booking_row)
 
 
 def get_booking(booking_id) -> dict | None:
@@ -189,12 +189,14 @@ def get_booking(booking_id) -> dict | None:
 
 
 def check_payable(booking_id):
+    """({id, amount_cents, status}, 200) when payable, else ({"error": ...}, status)."""
     payload, status = call(
         "GET", f"/bookings/{booking_id}/payable", expect=(200, 404, 409))
     return shaped(payload, status, 200, payable_row)
 
 
 def check_unlockable(booking_id):
+    """None when the booking may be unlocked, else ({"error": ...}, status)."""
     payload, status = call(
         "GET", f"/bookings/{booking_id}/unlockable", expect=(204, 402, 404))
     return None if status == 204 else (payload, status)
@@ -214,16 +216,12 @@ def cancel_booking(booking_id) -> dict | None:
     return booking_row(payload) if status == 200 else None
 
 
-# --- metrics ---
-
 def compute_metrics() -> dict:
     payload, _ = call("GET", "/metrics")
     if not isinstance(payload, dict):
         raise PurchaseUnavailable("metrics is not an object")
     return payload
 
-
-# --- tests and app wiring ---
 
 def reset_for_tests() -> None:
     """Empty the service, when it is on: it has /test/reset only when it runs
