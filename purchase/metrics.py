@@ -1,7 +1,11 @@
 """Metrics helpers: the business numbers GET /metrics answers with."""
 
+from purchase import client
+
 
 def compute_metrics(cur) -> dict:
+    if client.enabled():
+        return client.compute_metrics()
     cur.execute("SELECT COUNT(*) AS count FROM spaces")
     total_spaces = cur.fetchone()["count"]
 
