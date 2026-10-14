@@ -5,7 +5,7 @@ import re
 from psycopg.errors import UniqueViolation
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from purchase import client
+from purchase import client, mirror
 
 # Deliberately simple: good enough to catch a typo, not full RFC 5322.
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -24,7 +24,10 @@ def register_user(cur, email, password):
     """Create an account, storing only a hash of the password.
     Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
     if client.enabled():
-        return client.register_user(email, password)
+        payload, status = client.register_user(email, password)
+        if status == 201:
+            mirror.user(payload, password)
+        return payload, status
     if not is_valid_email(email):
         return {"error": "enter a valid email address"}, 400
     if not is_valid_password(password):

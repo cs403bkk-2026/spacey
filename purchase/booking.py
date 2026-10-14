@@ -9,7 +9,7 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation
 from shared.logger import logger
 from payment.services import authorize_card
 from payment.services import refund_payment
-from purchase import client
+from purchase import client, mirror
 from purchase.member import normalise_member_name
 
 BOOKING_COLUMNS = (
@@ -45,7 +45,11 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
     member is the name as sent: trimmed, "guest" if missing or blank.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
     if client.enabled():
-        return client.create_booking(space_id, member, start_time, end_time, party_size, user_id)
+        payload, status = client.create_booking(
+            space_id, member, start_time, end_time, party_size, user_id)
+        if status == 201:
+            mirror.booking(payload)
+        return payload, status
     cur.execute(
         "SELECT id, capacity, price_cents FROM spaces WHERE id = %s",
         (space_id,),
@@ -186,7 +190,10 @@ def mark_paid(cur, booking_id, card_last4) -> dict | None:
     """Flip the booking to paid, keeping only the card's last 4 digits.
     Returns the updated row."""
     if client.enabled():
-        return client.mark_paid(booking_id, card_last4)
+        row = client.mark_paid(booking_id, card_last4)
+        if row is not None:
+            mirror.booking(row)
+        return row
     cur.execute(
         "UPDATE bookings SET paid = TRUE, card_last4 = %s WHERE id = %s "
         f"RETURNING {BOOKING_COLUMNS}",
@@ -254,7 +261,10 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
 def cancel_booking(cur, booking_id) -> dict | None:
     """Delete a booking (its access code goes with it); None if not found."""
     if client.enabled():
-        return client.cancel_booking(booking_id)
+        row = client.cancel_booking(booking_id)
+        if row is not None:
+            mirror.cancel(booking_id)
+        return row
     cur.execute(
         f"DELETE FROM bookings WHERE id = %s RETURNING {BOOKING_COLUMNS}",
         (booking_id,),
