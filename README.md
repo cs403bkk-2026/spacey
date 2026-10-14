@@ -61,6 +61,8 @@ development-only default - but a real deployment should set all of them explicit
 | `RESET_DB_ON_START`  | If `true`, wipes all tables on startup. Used by tests; never set this in a real deployment or you will delete real data. | `false` |
 | `SECRET_KEY`         | Signs the login session cookie. **Must** be set to a real secret in any deployment - the default is public (it's printed right here in this file), so anyone could forge a session cookie claiming to be any user. The app would still run fine without it set, which is exactly what makes this easy to forget. | `dev-secret-key-not-for-production` |
 | `REPORTING_URL`      | Where `GET /dashboard` redirects (the Grafana report). | `https://grafana.cs403bkk26.space/d/spacey-reporting` |
+| `PURCHASE_URL`       | The Purchase service (spacey-purchase). Set, the `purchase/` functions call it; empty or unset, they run the old SQL on `DATABASE_URL`. If set and the service cannot answer, those routes answer `503 {"error": "purchase unavailable"}`. | empty (old SQL) |
+| `PURCHASE_TOKEN`     | The bearer token sent to the Purchase service. Set only in the Nomad variable `nomad/jobs/spacey` (`purchase_token`); never committed. | empty |
 
 A missing or unreachable `DATABASE_URL` now fails fast at startup with a short, readable message
 instead of a raw stack trace.
@@ -102,7 +104,7 @@ Quick summary of the JSON API (see [openapi.yaml](openapi.yaml) for the full det
 | GET, DELETE | `/bookings/<id>`               | Get or cancel one booking                                            |
 | POST   | `/bookings/<id>/pay`                | Pay a booking (mocked; `force_failure: true` tests the failure path) |
 | POST   | `/bookings/<id>/unlock`             | Get the access code for a paid booking (mocked lock)                 |
-| POST   | `/members/<name>/subscribe`         | Mocked subscription; a subscriber's bookings are paid on creation    |
+| POST   | `/members/<name>/subscribe`         | Removed; always answers 410                                          |
 | POST   | `/register`                         | Create an account (email + password, hashed)                        |
 | POST   | `/login`, `/logout`                 | Start or end a session                                               |
 | GET    | `/metrics`                          | Business metrics as JSON                                             |

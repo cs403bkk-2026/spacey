@@ -1,11 +1,11 @@
-"""Member helpers: accounts, and subscriptions, which cover a member's bookings."""
+"""Member helpers: accounts, and the member name a booking is stored under."""
 
 import re
-from datetime import timezone
-from unicodedata import name
 
 from psycopg.errors import UniqueViolation
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from purchase import client, mirror
 
 # Deliberately simple: good enough to catch a typo, not full RFC 5322.
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -23,6 +23,11 @@ def is_valid_password(password) -> bool:
 def register_user(cur, email, password):
     """Create an account, storing only a hash of the password.
     Returns (payload, status) - {"id": ..., "email": ...}, or an error."""
+    if client.enabled():
+        payload, status = client.register_user(email, password)
+        if status == 201:
+            mirror.user(payload, password)
+        return payload, status
     if not is_valid_email(email):
         return {"error": "enter a valid email address"}, 400
     if not is_valid_password(password):
@@ -48,6 +53,8 @@ def authenticate(cur, email, password):
     Returns (payload, status) - {"id": ..., "email": ...}, or an error.
     Wrong password and unknown email give the identical error, so a
     failed attempt can't be used to find out which emails are registered."""
+    if client.enabled():
+        return client.authenticate(email, password)
     invalid = {"error": "invalid email or password"}, 401
     if not isinstance(email, str) or not isinstance(password, str):
         return invalid
@@ -63,10 +70,6 @@ def authenticate(cur, email, password):
     return {"id": user["id"], "email": user["email"]}, 200
 
 
-def member_key(name: str) -> str:
-    return name.strip().lower()
-
-
 def normalise_member_name(name) -> str | None:
     """The name a booking is stored under: trimmed, "guest" if missing or
     blank. None if it isn't a string at all."""
@@ -77,37 +80,7 @@ def normalise_member_name(name) -> str | None:
     return name.strip() or "guest"
 
 
-def is_subscribed(cur, member) -> bool:
-    if not isinstance(member, str) or member_key(member) == "guest":
-        return False
-    cur.execute(
-        "SELECT 1 FROM subscriptions WHERE member = %s AND active",
-        (member_key(member),),
-    )
-    return cur.fetchone() is not None
-
-
 def subscribe(cur, name):
-    """Subscribe a member by name. Mocked, like payment: no provider, always
-    succeeds. Subscribing again is a no-op, so a retried request can't break
-    anything. Returns (payload, status)."""
-    member = member_key(name)
-    if not member:
-        return {"error": "member name must not be blank"}, 400
-    if member == "guest":
-        return {"error": "cannot subscribe the default guest account"}, 400
-    
-
-    cur.execute(
-        "INSERT INTO subscriptions (member) VALUES (%s) "
-        "ON CONFLICT (member) DO UPDATE SET active = TRUE "
-        "RETURNING member, active, started_at",
-        (member,),
-    )
-    row = cur.fetchone()
-    return {
-        "member": row["member"],
-        "active": row["active"],
-        "started_at": row["started_at"].astimezone(timezone.utc).isoformat(),
-    }, 200
-    
+    """Subscriptions are removed: always 410, touches no data, so an old
+    client gets a readable error instead of a 404."""
+    return {"error": "subscriptions have been removed"}, 410

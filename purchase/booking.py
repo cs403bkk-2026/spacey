@@ -1,5 +1,6 @@
 """Booking helpers: pricing, booking a space and finding bookings."""
 
+import os
 from datetime import datetime, timezone
 
 from psycopg import Error as DatabaseError
@@ -7,7 +8,9 @@ from psycopg.errors import DeadlockDetected, ExclusionViolation
 
 from shared.logger import logger
 from payment.services import authorize_card
-from purchase.member import normalise_member_name, is_subscribed
+from payment.services import refund_payment
+from purchase import client, mirror
+from purchase.member import normalise_member_name
 
 BOOKING_COLUMNS = (
     "id, space_id, member, paid, start_time, end_time, "
@@ -30,7 +33,7 @@ def calculate_booking_price_cents(
 ) -> int:
     """Prorate an hourly rate, rounding half cents up.
 
-    The caller supplies a validated interval and handles subscription coverage.
+    The caller supplies a validated interval.
     Duration is truncated to whole seconds, preserving the existing calculation.
     """
     seconds = int((end_time - start_time).total_seconds())
@@ -41,6 +44,12 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
     """Book a space for a member; user_id is the logged-in account or None.
     member is the name as sent: trimmed, "guest" if missing or blank.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
+    if client.enabled():
+        payload, status = client.create_booking(
+            space_id, member, start_time, end_time, party_size, user_id)
+        if status == 201:
+            mirror.booking(payload)
+        return payload, status
     cur.execute(
         "SELECT id, capacity, price_cents FROM spaces WHERE id = %s",
         (space_id,),
@@ -80,9 +89,7 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
     if cur.fetchone() is not None:
         return {"error": "space is already booked for that time"}, 409
 
-    # Unpaid until POST /bookings/<id>/pay is called - unless the
-    # member subscribes: then it is paid at once and costs nothing extra.
-    subscribed = is_subscribed(cur, member)
+    # Always unpaid at its calculated price.
     try:
         cur.execute(
             "INSERT INTO bookings "
@@ -93,12 +100,10 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
             (
                 space_id,
                 member,
-                subscribed,
+                False,
                 start_time,
                 end_time,
-                0
-                if subscribed
-                else calculate_booking_price_cents(
+                calculate_booking_price_cents(
                     space["price_cents"], start_time, end_time
                 ),
                 user_id,
@@ -112,11 +117,15 @@ def create_booking(cur, space_id, member, start_time, end_time, party_size, user
 
 
 def list_bookings(cur) -> list:
+    if client.enabled():
+        return client.list_bookings()
     cur.execute(f"SELECT {BOOKING_COLUMNS} FROM bookings ORDER BY start_time")
     return cur.fetchall()
 
 
 def list_space_bookings(cur, space_id) -> list:
+    if client.enabled():
+        return client.list_space_bookings(space_id)
     cur.execute(
         f"SELECT {BOOKING_COLUMNS} FROM bookings "
         "WHERE space_id = %s ORDER BY start_time",
@@ -127,6 +136,8 @@ def list_space_bookings(cur, space_id) -> list:
 
 def list_user_bookings(cur, user_id) -> list:
     """Bookings made while logged in as user_id; guest bookings never match."""
+    if client.enabled():
+        return client.list_user_bookings(user_id)
     cur.execute(
         f"SELECT {BOOKING_COLUMNS} FROM bookings "
         "WHERE user_id = %s ORDER BY start_time",
@@ -136,15 +147,67 @@ def list_user_bookings(cur, user_id) -> list:
 
 
 def get_booking(cur, booking_id) -> dict | None:
+    if client.enabled():
+        return client.get_booking(booking_id)
     cur.execute(
         f"SELECT {BOOKING_COLUMNS} FROM bookings WHERE id = %s", (booking_id,)
     )
     return cur.fetchone()
 
 
+def check_payable(cur, booking_id):
+    """May Payment collect, and how much? Collect only when status is
+    "pending"; "completed" means already paid.
+    Returns ({"id", "amount_cents", "status"}, 200) or ({"error": ...}, 404)."""
+    if client.enabled():
+        return client.check_payable(booking_id)
+    cur.execute(
+        "SELECT id, amount_cents, "
+        "CASE WHEN paid THEN 'completed' ELSE 'pending' END AS status "
+        "FROM bookings WHERE id = %s",  # a cancel deletes the row here: 404
+        (booking_id,),
+    )
+    facts = cur.fetchone()
+    if facts is None:
+        return {"error": "booking not found"}, 404
+    return facts, 200
+
+
+def check_unlockable(cur, booking_id) -> tuple[dict, int] | None:
+    """Purchase's check before Access issues a code: the booking must exist
+    and be paid. Returns (payload, status) to answer with, or None if fine."""
+    if client.enabled():
+        return client.check_unlockable(booking_id)
+    booking = get_booking(cur, booking_id)
+    if booking is None:
+        return {"error": "booking not found"}, 404
+    if not booking["paid"]:
+        return {"error": "booking is not paid"}, 402
+    return None
+
+
+def check_cancellable(cur, booking_id) -> tuple[dict, int] | None:
+    """SP-R09: a booking may be cancelled only before its start, by the
+    database clock. Returns (payload, status) to answer with, or None if fine."""
+    if client.enabled():
+        return client.check_cancellable(booking_id)
+    booking = get_booking(cur, booking_id)
+    if booking is None:
+        return {"error": "booking not found"}, 404
+    cur.execute("SELECT %s <= now() AS started", (booking["start_time"],))
+    if cur.fetchone()["started"]:
+        return {"error": "booking has already started"}, 409
+    return None
+
+
 def mark_paid(cur, booking_id, card_last4) -> dict | None:
     """Flip the booking to paid, keeping only the card's last 4 digits.
     Returns the updated row."""
+    if client.enabled():
+        row = client.mark_paid(booking_id, card_last4)
+        if row is not None:
+            mirror.booking(row)
+        return row
     cur.execute(
         "UPDATE bookings SET paid = TRUE, card_last4 = %s WHERE id = %s "
         f"RETURNING {BOOKING_COLUMNS}",
@@ -171,13 +234,36 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
             logger.info("payment booking_id=%s outcome=already_paid", booking_id)
             return row, 200
 
+        # ADR 0003: Purchase checks the hold before the card is charged.
+        # Only the service has the 15-minute hold, so the check runs only with
+        # PURCHASE_URL set. Unset, /pay behaves exactly as before.
+        use_service = bool(os.getenv("PURCHASE_URL"))
+        if use_service:
+            facts, status = check_payable(cur, booking_id)
+            if status != 200:  # 409: the hold has expired; 404: cancelled since
+                outcome = "hold_expired" if status == 409 else "not_found"
+                logger.warning("payment booking_id=%s outcome=%s", booking_id, outcome)
+                return facts, status
+
         rejected = authorize_card(card_number, expiry, cvc, force_failure)
         if rejected:
             outcome = "invalid_card" if rejected[1] == 400 else "failed"
             logger.warning("payment booking_id=%s outcome=%s", booking_id, outcome)
             return rejected
 
+        booking = row  # mark_paid replaces row; the refund needs the amount
         row = mark_paid(cur, booking_id, card_number[-4:])
+        if row is None and use_service:  # the service refused the late payment
+            logger.warning("payment booking_id=%s outcome=refused", booking_id)
+            if booking["amount_cents"] > 0:  # as on cancel: a refund of 0 fails
+                refund_payment(
+                    cur.connection,
+                    booking_id=booking_id,
+                    amount_cents=booking["amount_cents"],
+                    card_last4=card_number[-4:],
+                    reason="hold_expired",
+                )
+            return check_payable(cur, booking_id)  # 409 (or 404), never a 500
         logger.info("payment booking_id=%s outcome=succeeded", booking_id)
         return row, 200
     except DatabaseError:
@@ -188,6 +274,11 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
 
 def cancel_booking(cur, booking_id) -> dict | None:
     """Delete a booking (its access code goes with it); None if not found."""
+    if client.enabled():
+        row = client.cancel_booking(booking_id)
+        if row is not None:
+            mirror.cancel(booking_id)
+        return row
     cur.execute(
         f"DELETE FROM bookings WHERE id = %s RETURNING {BOOKING_COLUMNS}",
         (booking_id,),

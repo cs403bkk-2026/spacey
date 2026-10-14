@@ -1,5 +1,7 @@
 """Space helpers: validating, storing and finding which spaces are booked."""
 
+from purchase import client, mirror
+
 
 def is_valid_capacity(capacity) -> bool:
     # bool is a subclass of int in Python, so rule out true/false
@@ -20,6 +22,8 @@ def is_valid_price(price) -> bool:
 
 def booked_space_ids(cur, window) -> set:
     """Spaces booked during the window, or booked right now if no window."""
+    if client.enabled():
+        return client.booked_space_ids(window)
     if window is None:
         cur.execute(
             "SELECT DISTINCT space_id FROM bookings "
@@ -40,11 +44,15 @@ SPACE_COLUMNS = "id, name, capacity, price_cents"
 
 
 def list_spaces(cur) -> list:
+    if client.enabled():
+        return client.list_spaces()
     cur.execute(f"SELECT {SPACE_COLUMNS} FROM spaces")
     return cur.fetchall()
 
 
 def get_space(cur, space_id) -> dict | None:
+    if client.enabled():
+        return client.get_space(space_id)
     cur.execute(f"SELECT {SPACE_COLUMNS} FROM spaces WHERE id = %s", (space_id,))
     return cur.fetchone()
 
@@ -52,6 +60,11 @@ def get_space(cur, space_id) -> dict | None:
 def create_space(cur, name, capacity, price_cents):
     """Add a space after checking its fields; the name is stored trimmed.
     Returns (payload, status) - the new space, or an {"error": ...}."""
+    if client.enabled():
+        payload, status = client.create_space(name, capacity, price_cents)
+        if status == 201:
+            mirror.space(payload)
+        return payload, status
     if name is None or capacity is None:
         return {"error": "name and capacity are required"}, 400
     if not is_valid_name(name):
@@ -74,6 +87,11 @@ def update_space(cur, space_id, fields):
     body: a field left out keeps its current value, but one sent as null is
     rejected - so this needs the body itself, not just its values.
     Returns (payload, status) - the updated space, or an {"error": ...}."""
+    if client.enabled():
+        payload, status = client.update_space(space_id, fields)
+        if status == 200:
+            mirror.space(payload)
+        return payload, status
     if not any(field in fields for field in ("name", "capacity", "price_cents")):
         return {"error": "provide name, capacity and/or price_cents to update"}, 400
     if get_space(cur, space_id) is None:
@@ -107,6 +125,11 @@ def update_space(cur, space_id, fields):
 def delete_space(cur, space_id):
     """Delete a space, refused while it still has bookings.
     Returns (payload, status) - payload is None once deleted."""
+    if client.enabled():
+        payload, status = client.delete_space(space_id)
+        if status == 204:
+            mirror.delete_space(space_id)
+        return payload, status
     if get_space(cur, space_id) is None:
         return {"error": "space not found"}, 404
     cur.execute(

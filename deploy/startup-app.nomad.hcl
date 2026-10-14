@@ -60,6 +60,8 @@ job "spacey" {
       template {
         data        = <<EOH
 DATABASE_URL={{ with nomadVar "nomad/jobs/spacey" }}{{ .database_url }}{{ end }}
+PURCHASE_URL={{ with nomadVar "nomad/jobs/spacey" }}{{ with .purchase_url }}{{ . }}{{ end }}{{ end }}
+PURCHASE_TOKEN={{ with nomadVar "nomad/jobs/spacey" }}{{ with .purchase_token }}{{ . }}{{ end }}{{ end }}
 EOH
         destination = "secrets/runtime.env"
         env         = true
