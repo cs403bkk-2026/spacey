@@ -7,6 +7,7 @@ import purchase.booking
 from app import create_app
 from purchase.booking import (
     calculate_booking_price_cents,
+    check_cancellable,
     check_payable,
     check_unlockable,
 )
@@ -287,3 +288,73 @@ def test_pay_without_purchase_url_is_unchanged(monkeypatch, url, paid_row):
 
     assert answer == (paid_row, 200)
     assert calls == {"check_payable": 0, "charge": 1, "mark_paid": 1}
+
+
+STARTED_BOOKING = {
+    "member": "annabel",
+    "start_time": "2020-01-01T10:00:00Z",
+    "end_time": "2020-01-01T11:00:00Z",
+}
+
+
+def a_not_started_id(client, booking):
+    return booking["id"]
+
+
+def a_started_id(client, booking):
+    return client.post("/spaces/1/bookings", json=STARTED_BOOKING).get_json()["id"]
+
+
+@pytest.mark.parametrize(
+    ("booking_id_of", "expected"),
+    [
+        (an_unknown_id, ({"error": "booking not found"}, 404)),
+        (a_cancelled_id, ({"error": "booking not found"}, 404)),
+        (a_not_started_id, None),
+        (a_started_id, ({"error": "booking has already started"}, 409)),
+    ],
+    ids=["unknown_id", "cancelled", "not_started", "started"],
+)
+def test_check_cancellable(booking_id_of, expected):
+    app, client, booking = book_through_the_api()
+    booking_id = booking_id_of(client, booking)
+
+    with app.db.cursor() as cur:
+        answer = check_cancellable(cur, booking_id)
+
+    assert answer == expected
+
+
+@pytest.mark.parametrize(
+    ("booking_id_of", "paid", "status", "reasons"),
+    [
+        (a_started_id, False, 409, []),
+        (a_started_id, True, 409, []),
+        (a_not_started_id, True, 200, ["cancellation"]),
+    ],
+    ids=["unpaid_after_start", "paid_after_start", "paid_before_start"],
+)
+def test_cancel_refunds_only_before_the_start(
+    monkeypatch, booking_id_of, paid, status, reasons
+):
+    refunds = []
+    monkeypatch.setattr(
+        "app.refund_payment", lambda conn, **kwargs: refunds.append(kwargs)
+    )
+    _, client, booking = book_through_the_api()
+    booking_id = booking_id_of(client, booking)
+    if paid:
+        client.post(f"/bookings/{booking_id}/pay", json=VALID_CARD)
+    before = client.get(f"/bookings/{booking_id}").get_json()
+
+    response = client.delete(f"/bookings/{booking_id}")
+    after = client.get(f"/bookings/{booking_id}")
+
+    assert response.status_code == status
+    assert [refund["reason"] for refund in refunds] == reasons
+    if status == 409:
+        assert response.get_json() == {"error": "booking has already started"}
+        assert after.get_json() == before
+    else:
+        assert response.get_json() == before
+        assert after.status_code == 404

@@ -202,6 +202,13 @@ def check_unlockable(booking_id):
     return None if status == 204 else (payload, status)
 
 
+def check_cancellable(booking_id):
+    """None when the booking may be cancelled, else ({"error": ...}, status)."""
+    payload, status = call(
+        "GET", f"/bookings/{booking_id}/cancellable", expect=(204, 404, 409))
+    return None if status == 204 else (payload, status)
+
+
 def mark_paid(booking_id, card_last4) -> dict | None:
     """The row when confirmed; None when missing, cancelled or refused."""
     payload, status = call(
@@ -211,7 +218,8 @@ def mark_paid(booking_id, card_last4) -> dict | None:
 
 
 def cancel_booking(booking_id) -> dict | None:
-    """The row as it was before the cancel, or None."""
+    """The row as it was before the cancel, or None. A 409 means the start
+    passed after check_cancellable: nothing changed; it is a link failure."""
     payload, status = call("DELETE", f"/bookings/{booking_id}", expect=(200, 404))
     return booking_row(payload) if status == 200 else None
 

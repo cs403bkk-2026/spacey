@@ -416,7 +416,7 @@ def test_find_unknown_booking_returns_404():
 def test_cancel_booking_makes_space_available_again():
     client = make_client()
     created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
     ).get_json()
 
     response = client.delete(f"/bookings/{created['id']}")
@@ -424,7 +424,7 @@ def test_cancel_booking_makes_space_available_again():
     assert response.status_code == 200
     assert response.get_json() == created
 
-    spaces = client.get("/spaces").get_json()["spaces"]
+    spaces = client.get("/spaces", query_string=slot(1, 2)).get_json()["spaces"]
     founders_desk = next(s for s in spaces if s["id"] == 1)
     assert founders_desk["available"] is True
 
@@ -486,7 +486,7 @@ def test_the_access_code_survives_a_restart():
 
 def test_cancelling_a_booking_removes_its_access_code():
     client = make_client()
-    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)})
     client.post("/bookings/1/pay", json=VALID_CARD)
     client.post("/bookings/1/unlock")
 

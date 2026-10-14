@@ -186,6 +186,20 @@ def check_unlockable(cur, booking_id) -> tuple[dict, int] | None:
     return None
 
 
+def check_cancellable(cur, booking_id) -> tuple[dict, int] | None:
+    """SP-R09: a booking may be cancelled only before its start, by the
+    database clock. Returns (payload, status) to answer with, or None if fine."""
+    if client.enabled():
+        return client.check_cancellable(booking_id)
+    booking = get_booking(cur, booking_id)
+    if booking is None:
+        return {"error": "booking not found"}, 404
+    cur.execute("SELECT %s <= now() AS started", (booking["start_time"],))
+    if cur.fetchone()["started"]:
+        return {"error": "booking has already started"}, 409
+    return None
+
+
 def mark_paid(cur, booking_id, card_last4) -> dict | None:
     """Flip the booking to paid, keeping only the card's last 4 digits.
     Returns the updated row."""
