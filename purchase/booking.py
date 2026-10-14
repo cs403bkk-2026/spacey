@@ -1,6 +1,5 @@
 """Booking helpers: pricing, booking a space and finding bookings."""
 
-import os
 from datetime import datetime, timezone
 
 from psycopg import Error as DatabaseError
@@ -235,9 +234,9 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
             return row, 200
 
         # ADR 0003: Purchase checks the hold before the card is charged.
-        # Only the service has the 15-minute hold, so the check runs only with
-        # PURCHASE_URL set. Unset, /pay behaves exactly as before.
-        use_service = bool(os.getenv("PURCHASE_URL"))
+        # Only the service has the 15-minute hold, so the check runs only when
+        # the service answers. Otherwise /pay behaves exactly as before.
+        use_service = client.enabled()
         if use_service:
             facts, status = check_payable(cur, booking_id)
             if status != 200:  # 409: the hold has expired; 404: cancelled since

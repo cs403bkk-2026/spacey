@@ -28,7 +28,16 @@ class PurchaseUnavailable(Exception):
 
 
 def enabled() -> bool:
-    return bool(os.getenv("PURCHASE_URL"))
+    """The service answers only with PURCHASE_URL set and the switch on."""
+    return bool(os.getenv("PURCHASE_URL")) and switch_state() == "on"
+
+
+def switch_state() -> str:
+    """'off', 'frozen' or 'on': purchase_switch, which the Purchase team sets
+    with its own database login (PUR-025). Read on every call, so a change
+    takes effect at once, with no restart."""
+    with flask.current_app.db.cursor() as cur:
+        return cur.execute("SELECT state FROM purchase_switch").fetchone()["state"]
 
 
 def call(method, path, body=None, params=None, expect=(200,)):
@@ -232,10 +241,24 @@ def compute_metrics() -> dict:
 
 
 def reset_for_tests() -> None:
-    """Empty the service, when it is on: it has /test/reset only when it runs
-    with PURCHASE_TEST_RESET=1."""
-    if enabled():
+    """Empty the service whenever PURCHASE_URL is set (the switch row may be
+    off): it has /test/reset only when it runs with PURCHASE_TEST_RESET=1."""
+    if os.getenv("PURCHASE_URL"):
         call("POST", "/test/reset", expect=(204,))
+
+
+def check_link() -> None:
+    """Log whether the service answers this hub with its token, so the
+    switch can be checked in the hub's log (PUR-025, gunicorn.conf.py)."""
+    if not os.getenv("PURCHASE_URL"):
+        return
+    try:
+        compute_metrics()
+        logger.info("purchase service check: ok")
+    except PurchaseUnavailable as error:
+        logger.warning("purchase service check: failed (%s)", error)
+    except Exception as error:  # a log line must never stop the hub's start
+        logger.warning("purchase service check: failed (%s)", type(error).__name__)
 
 
 def init_app(app) -> None:
