@@ -74,6 +74,7 @@ def test_cur_unused(stub, name, args, method, path, status, payload, expected):
 
 
 def test_cancel_still_refunds(stub, hub, monkeypatch):
+    stub.answer("GET", "/bookings/1/cancellable", 204)
     stub.answer("DELETE", "/bookings/1", 200, {**PAID, "amount_cents": 2500})
     refunds = []
     monkeypatch.setattr(
@@ -83,10 +84,37 @@ def test_cancel_still_refunds(stub, hub, monkeypatch):
     response = hub.delete("/bookings/1")
 
     assert response.status_code == 200
+    assert [(r["method"], r["path"]) for r in stub.requests[1:]] == [
+        ("GET", "/bookings/1/cancellable"), ("DELETE", "/bookings/1")]
     assert refunds == [{
         "booking_id": 1, "amount_cents": 2500, "card_last4": "4242",
         "reason": "cancellation",
     }]
+
+
+@pytest.mark.parametrize("cancellable,delete,expected,calls", [
+    ((409, err("booking has already started")), None,
+     (409, err("booking has already started")),
+     [("GET", "/bookings/1/cancellable")]),
+    ((204, None), (409, err("booking has already started")),
+     (503, err("purchase unavailable")),
+     [("GET", "/bookings/1/cancellable"), ("DELETE", "/bookings/1")]),
+], ids=["started", "started_between_the_calls"])
+def test_cancel_refused_via_service(
+        stub, hub, monkeypatch, cancellable, delete, expected, calls):
+    stub.answer("GET", "/bookings/1/cancellable", *cancellable)
+    if delete:
+        stub.answer("DELETE", "/bookings/1", *delete)
+    refunds = []
+    monkeypatch.setattr(
+        "app.refund_payment", lambda conn, **kwargs: refunds.append(kwargs)
+    )
+
+    response = hub.delete("/bookings/1")
+
+    assert (response.status_code, response.get_json()) == expected
+    assert [(r["method"], r["path"]) for r in stub.requests[1:]] == calls
+    assert refunds == []
 
 
 @pytest.mark.parametrize("status,answer,expected,user_id", [

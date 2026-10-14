@@ -179,6 +179,7 @@ SUCCESS = [
     ("check_payable", (1,), "GET", "/bookings/1/payable", 200, PAYABLE,
      (PAYABLE, 200)),
     ("check_unlockable", (1,), "GET", "/bookings/1/unlockable", 204, None, None),
+    ("check_cancellable", (1,), "GET", "/bookings/1/cancellable", 204, None, None),
     ("mark_paid", (1, "4242"), "POST", "/bookings/1/paid", 200, BOOKING,
      OLD_BOOKING),
     ("cancel_booking", (1,), "DELETE", "/bookings/1", 200, BOOKING, OLD_BOOKING),
@@ -240,6 +241,10 @@ FAILURES = [
      err("booking is not paid")),
     ("check_unlockable", (1,), "GET", "/bookings/1/unlockable", 404,
      err("booking not found")),
+    ("check_cancellable", (1,), "GET", "/bookings/1/cancellable", 404,
+     err("booking not found")),
+    ("check_cancellable", (1,), "GET", "/bookings/1/cancellable", 409,
+     err("booking has already started")),
 ]
 # Where the old body gives None instead of (payload, status).
 NONE_ON_ERROR = {"get_space", "get_booking", "mark_paid", "cancel_booking"}

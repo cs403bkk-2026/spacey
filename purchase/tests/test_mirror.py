@@ -146,6 +146,7 @@ def test_book_pay_cancel_reach_the_frozen_table(
     with pytest.raises(ReadOnlySqlTransaction):
         old("DELETE FROM bookings WHERE id = 1")
 
+    stub.answer("GET", "/bookings/1/cancellable", 204)
     stub.answer("DELETE", "/bookings/1", 200, PAID)
     assert hub.delete("/bookings/1").status_code == 200
     assert old_ids() == []

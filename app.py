@@ -299,6 +299,10 @@ def create_app(
     @app.delete("/bookings/<int:booking_id>")
     def cancel_booking(booking_id):
         with app.db.cursor() as cur:
+            refusal = purchase.booking.check_cancellable(cur, booking_id)
+            if refusal is not None:  # SP-R09: unknown, or already started
+                payload, status = refusal
+                return jsonify(payload), status
             row = purchase.booking.cancel_booking(cur, booking_id)
 
         if row is None:
