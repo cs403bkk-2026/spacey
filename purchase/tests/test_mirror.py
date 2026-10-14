@@ -22,46 +22,6 @@ PAYABLE = {"id": 1, "amount_cents": 2500, "status": "pending"}
 WINDOW = {"start_time": BOOKING["start_time"], "end_time": BOOKING["end_time"]}
 LOG = "purchase mirror failed: %s (%s)"
 
-# spacey-purchase scripts/freeze.sql and unfreeze.sql, as of commit 47cb13e
-FREEZE = """\
--- Refuse every write to spacey's old Purchase tables, except in a transaction
--- that ran SET LOCAL purchase.mirror = 'on'. Safe to run twice.
-CREATE OR REPLACE FUNCTION purchase_refuse_write() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF current_setting('purchase.mirror', true) = 'on' THEN
-        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
-        RETURN NEW;
-    END IF;
-    RAISE EXCEPTION 'purchase: % on % refused: table frozen', TG_OP, TG_TABLE_NAME
-        USING ERRCODE = 'read_only_sql_transaction';
-END $$;
-
-DO $$
-DECLARE t text;
-BEGIN
-    FOREACH t IN ARRAY ARRAY['users', 'spaces', 'bookings'] LOOP
-        EXECUTE format('DROP TRIGGER IF EXISTS purchase_frozen ON %I', t);
-        EXECUTE format('DROP TRIGGER IF EXISTS purchase_frozen_truncate ON %I', t);
-        EXECUTE format('CREATE TRIGGER purchase_frozen BEFORE INSERT OR UPDATE OR DELETE ON %I'
-                       ' FOR EACH ROW EXECUTE FUNCTION purchase_refuse_write()', t);
-        EXECUTE format('CREATE TRIGGER purchase_frozen_truncate BEFORE TRUNCATE ON %I'
-                       ' FOR EACH STATEMENT EXECUTE FUNCTION purchase_refuse_write()', t);
-    END LOOP;
-END $$;
-"""
-UNFREEZE = """\
--- Remove the freeze that freeze.sql adds, so the old tables take every write
--- again. Safe to run twice.
-DROP TRIGGER IF EXISTS purchase_frozen ON users;
-DROP TRIGGER IF EXISTS purchase_frozen_truncate ON users;
-DROP TRIGGER IF EXISTS purchase_frozen ON spaces;
-DROP TRIGGER IF EXISTS purchase_frozen_truncate ON spaces;
-DROP TRIGGER IF EXISTS purchase_frozen ON bookings;
-DROP TRIGGER IF EXISTS purchase_frozen_truncate ON bookings;
-DROP FUNCTION IF EXISTS purchase_refuse_write();
-"""
-
 
 def old(sql, params=None):
     """Run one statement on the hub's database, outside the mirror."""
@@ -98,9 +58,9 @@ def old_user(hub):  # BOOKING's user_id 1: old bookings.user_id references users
 
 @pytest.fixture
 def frozen():  # list it after `hub`: hub's reset truncates, which the freeze refuses
-    old(FREEZE)
+    old("UPDATE purchase_switch SET state = 'on'")
     yield
-    old(UNFREEZE)
+    old("UPDATE purchase_switch SET state = 'off'")
 
 
 @pytest.fixture
