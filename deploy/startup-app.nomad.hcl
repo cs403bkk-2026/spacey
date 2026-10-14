@@ -51,6 +51,10 @@ job "spacey" {
       config {
         image = var.image
         ports = ["http"]
+        # PUR-025: in a container, the public name resolves to the server's
+        # public IP, which refuses container traffic. Resolve it to this node,
+        # whose proxy serves it with the same certificate.
+        extra_hosts = ["purchase.cs403bkk26.space:${attr.unique.network.ip-address}"]
       }
 
       env {
