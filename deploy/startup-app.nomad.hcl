@@ -52,9 +52,10 @@ job "spacey" {
         image = var.image
         ports = ["http"]
         # PUR-025: in a container, the public name resolves to the server's
-        # public IP, which refuses container traffic. Resolve it to this node,
-        # whose proxy serves it with the same certificate.
-        extra_hosts = ["purchase.cs403bkk26.space:${attr.unique.network.ip-address}"]
+        # public IP, which refuses container traffic. Resolve it to the
+        # proxy's private address (node cs403bkk-nomad-1), which serves it
+        # with the same certificate and is reachable from every node.
+        extra_hosts = ["purchase.cs403bkk26.space:192.168.171.100"]
       }
 
       env {
