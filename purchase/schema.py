@@ -126,6 +126,12 @@ def create_tables(cur) -> None:
         )
         """
     )
+    # PUR-027: true sends /pay to the service (client.pays); false, the
+    # default, runs /pay here. Set with the same logins as state.
+    cur.execute(
+        "ALTER TABLE purchase_switch "
+        "ADD COLUMN IF NOT EXISTS pays BOOLEAN NOT NULL DEFAULT false"
+    )
     cur.execute("INSERT INTO purchase_switch DEFAULT VALUES ON CONFLICT DO NOTHING")
     cur.execute(
         """

@@ -308,7 +308,11 @@ def create_app(
         if row is None:
             return jsonify(error="booking not found"), 404
 
-        if row["paid"] and row["amount_cents"] > 0:
+        # PUR-027: the local refund runs only when our service refunded
+        # nothing: it has no Payments settings, or Payments has no charge
+        # for the booking (charged here before the flag, or in a rollback).
+        refund = row.pop("refund", None)  # what our service's refund did
+        if row["paid"] and row["amount_cents"] > 0 and refund in (None, "no_charge"):
             refund_payment(
                 app.db,
                 booking_id=row["id"],

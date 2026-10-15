@@ -64,6 +64,14 @@ development-only default - but a real deployment should set all of them explicit
 | `PURCHASE_URL`       | The Purchase service (spacey-purchase). Set, the `purchase/` functions call it; empty or unset, they run the old SQL on `DATABASE_URL`. If set and the service cannot answer, those routes answer `503 {"error": "purchase unavailable"}`. | empty (old SQL) |
 | `PURCHASE_TOKEN`     | The bearer token sent to the Purchase service. Set only in the Nomad variable `nomad/jobs/spacey` (`purchase_token`); never committed. | empty |
 
+`/pay` follows one more flag, the column `pays` on the switch row `purchase_switch` (PUR-027),
+which the Purchase team sets with its own database login. `false` (the default): `/pay` charges
+here, as before. `true`, with `PURCHASE_URL` set and the switch `on`: `/pay` goes to the Purchase
+service, which charges through Payments' API; the hub mirrors the paid row. It is read on every
+call, so a change takes effect at once, with no restart. A paid cancel is refunded here only when
+the service refunded nothing (Payments holds no charge for the booking, or the service has no
+Payments settings), so a booking charged here before the flag is still refunded here.
+
 A missing or unreachable `DATABASE_URL` now fails fast at startup with a short, readable message
 instead of a raw stack trace.
 

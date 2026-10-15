@@ -19,6 +19,7 @@ from psycopg.errors import ReadOnlySqlTransaction
 from shared.logger import logger
 
 TIMEOUT_S = 1.5
+SLOW_TIMEOUT_S = 10  # the service may wait for Payments
 USER_COLUMNS = "id, email"
 TIMES = ("start_time", "end_time", "created_at")
 
@@ -40,7 +41,17 @@ def switch_state() -> str:
         return cur.execute("SELECT state FROM purchase_switch").fetchone()["state"]
 
 
-def call(method, path, body=None, params=None, expect=(200,)):
+def pays() -> bool:
+    """PUR-027's flag: the switch row's pays, which our logins set. True sends
+    /pay to the service. Read on every call, so a change takes effect at
+    once, with no restart."""
+    if not enabled():
+        return False
+    with flask.current_app.db.cursor() as cur:
+        return cur.execute("SELECT pays FROM purchase_switch").fetchone()["pays"]
+
+
+def call(method, path, body=None, params=None, expect=(200,), timeout=TIMEOUT_S):
     url = os.environ["PURCHASE_URL"].rstrip("/") + path
     if params:
         url += "?" + urlencode(params)
@@ -52,7 +63,7 @@ def call(method, path, body=None, params=None, expect=(200,)):
         try:
             # One try, no retry: a write whose answer was lost may have
             # committed, so a retry could book twice.
-            with urlopen(request, timeout=TIMEOUT_S) as response:
+            with urlopen(request, timeout=timeout) as response:
                 status, raw = response.status, response.read()
         except HTTPError as error:  # 4xx/5xx carry the answer
             status, raw = error.code, error.read()
@@ -222,15 +233,34 @@ def mark_paid(booking_id, card_last4) -> dict | None:
     """The row when confirmed; None when missing, cancelled or refused."""
     payload, status = call(
         "POST", f"/bookings/{booking_id}/paid", {"card_last4": card_last4},
-        expect=(200, 404, 409))
+        expect=(200, 404, 409), timeout=SLOW_TIMEOUT_S)
     return booking_row(payload) if status == 200 else None
+
+
+def mark_booking_paid(booking_id, card_number, expiry, cvc, force_failure=False):
+    """PUR-027: /pay in the service, which charges through Payments' API.
+    (payload, status) as the local body returns it: the row on success."""
+    body = {"card_number": card_number, "expiry": expiry, "cvc": cvc,
+            "force_failure": force_failure}
+    payload, status = call(
+        "POST", f"/bookings/{booking_id}/pay", body,
+        expect=(200, 400, 402, 404, 409, 503), timeout=SLOW_TIMEOUT_S)
+    return shaped(payload, status, 200, booking_row)
 
 
 def cancel_booking(booking_id) -> dict | None:
     """The row as it was before the cancel, or None. A 409 means the start
-    passed after check_cancellable: nothing changed; it is a link failure."""
-    payload, status = call("DELETE", f"/bookings/{booking_id}", expect=(200, 404))
-    return booking_row(payload) if status == 200 else None
+    passed after check_cancellable: nothing changed; it is a link failure.
+    The row keeps the service's "refund", when it sends one (PUR-027)."""
+    payload, status = call(
+        "DELETE", f"/bookings/{booking_id}", expect=(200, 404),
+        timeout=SLOW_TIMEOUT_S)
+    if status != 200:
+        return None
+    row = booking_row(payload)
+    if "refund" in payload:
+        row["refund"] = payload["refund"]
+    return row
 
 
 def compute_metrics() -> dict:
