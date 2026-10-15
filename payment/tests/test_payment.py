@@ -413,3 +413,170 @@ def test_refund_booking_backward_compatibility():
     assert refund["status"] == "refunded"
     assert refund["amount_cents"] == 500
 
+
+
+# --- PT-009: every payment attempt is recorded; collect and payment_status (ADR 0004) ---
+
+def attempts(app, booking_id):
+    from payment.repository import get_payments_for_booking
+    return get_payments_for_booking(app.db, booking_id)
+
+
+def test_paying_records_one_successful_attempt_with_only_the_last4():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    booking_id = new_unpaid_booking(client, 1)
+    booking = client.get(f"/bookings/{booking_id}").get_json()
+
+    assert pay_with(client, booking_id).status_code == 200
+
+    [payment] = attempts(app, booking_id)
+    assert payment["status"] == "success"
+    assert payment["amount_cents"] == booking["amount_cents"]
+    assert payment["currency"] == "USD"
+    assert payment["card_last4"] == "4242"
+    assert payment["reason"] is None
+    assert VALID_CARD["card_number"] not in str(payment)
+
+
+def test_a_declined_attempt_is_recorded_and_a_retry_succeeds():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    booking_id = new_unpaid_booking(client, 1)
+
+    assert pay_with(client, booking_id, force_failure=True).status_code == 402
+    assert pay_with(client, booking_id).status_code == 200
+
+    recorded = attempts(app, booking_id)
+    assert [(p["status"], p["reason"]) for p in recorded] == [
+        ("failed", "payment failed"), ("success", None)]
+
+
+@pytest.mark.parametrize("repeat", ["already_paid", "invalid_card"])
+def test_repeats_and_invalid_cards_record_no_attempt(repeat):
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    booking_id = new_unpaid_booking(client, 1)
+    if repeat == "already_paid":
+        pay_with(client, booking_id)
+        expected = ["success"]
+    else:
+        expected = []
+
+    pay_with(client, booking_id, cvc="1")
+
+    assert [p["status"] for p in attempts(app, booking_id)] == expected
+
+
+def test_collect_after_a_success_returns_the_same_payment_without_charging(monkeypatch):
+    from payment import services
+    app = create_app(reset_on_start=True)
+    first = services.collect(app.db, 7, 2500, **VALID_CARD)
+    charges = []
+    monkeypatch.setattr(services, "charge_card", lambda *args: charges.append(args))
+
+    again = services.collect(app.db, 7, 2500, **VALID_CARD)
+
+    assert first == {"status": "paid", "payment_id": first["payment_id"], "error": None}
+    assert again == first
+    assert charges == []
+    assert len(attempts(app, 7)) == 1
+
+
+def test_collect_reports_invalid_cards_and_declines_as_failed():
+    from payment import services
+    app = create_app(reset_on_start=True)
+
+    invalid = services.collect(app.db, 7, 2500, **{**VALID_CARD, "cvc": "1"})
+    declined = services.collect(app.db, 7, 2500, **VALID_CARD, force_failure=True)
+
+    assert invalid == {"status": "failed", "payment_id": None,
+                       "error": "cvc must be 3 or 4 digits"}
+    assert declined == {"status": "failed", "payment_id": declined["payment_id"],
+                        "error": "payment failed"}
+    assert [p["id"] for p in attempts(app, 7)] == [declined["payment_id"]]
+
+
+def test_collect_for_a_free_booking_stores_nothing():
+    from payment import services
+    app = create_app(reset_on_start=True)
+
+    result = services.collect(app.db, 7, 0, **VALID_CARD)
+
+    assert result == {"status": "paid", "payment_id": None, "error": None}
+    assert attempts(app, 7) == []
+
+
+def test_an_unknown_outcome_is_not_a_failure_and_is_never_charged_twice(monkeypatch):
+    from payment import services
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    booking_id = new_unpaid_booking(client, 1)
+    charges = []
+
+    def lost_answer(*args):
+        charges.append(args)
+        raise services.ProviderUnavailable
+
+    monkeypatch.setattr(services, "charge_card", lost_answer)
+
+    first = pay_with(client, booking_id)
+    again = pay_with(client, booking_id)
+
+    for response in (first, again):
+        assert response.status_code == 504
+        assert response.get_json() == {"error": "payment outcome unknown"}
+    assert len(charges) == 1
+    assert client.get(f"/bookings/{booking_id}").get_json()["paid"] is False
+    assert client.post(f"/bookings/{booking_id}/unlock").status_code == 402
+    [payment] = attempts(app, booking_id)
+    assert payment["status"] == "unknown"
+    assert services.payment_status(app.db, booking_id) == {
+        "status": "unknown", "payment_id": payment["id"]}
+
+
+def test_payment_status_reports_none_failed_then_paid():
+    from payment import services
+    app = create_app(reset_on_start=True)
+
+    before = services.payment_status(app.db, 7)
+    declined = services.collect(app.db, 7, 2500, **VALID_CARD, force_failure=True)
+    after_decline = services.payment_status(app.db, 7)
+    paid = services.collect(app.db, 7, 2500, **VALID_CARD)
+    after_payment = services.payment_status(app.db, 7)
+
+    assert before == {"status": "none", "payment_id": None}
+    assert after_decline == {"status": "failed", "payment_id": declined["payment_id"]}
+    assert after_payment == {"status": "paid", "payment_id": paid["payment_id"]}
+
+
+def test_the_database_allows_one_open_or_successful_attempt_per_booking():
+    import psycopg
+    from payment.repository import insert_payment
+    app = create_app(reset_on_start=True)
+    insert_payment(app.db, 7, 2500, "failed")
+    insert_payment(app.db, 7, 2500, "failed")  # retries after a decline are fine
+    insert_payment(app.db, 7, 2500, "success")
+    insert_payment(app.db, 7, 2500, "refunded")
+
+    for status in ("success", "unknown"):
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            insert_payment(app.db, 7, 2500, status)
+    insert_payment(app.db, 8, 2500, "success")  # another booking is unaffected
+
+
+def test_the_index_migration_runs_on_existing_payments():
+    from payment.migrations import run_migrations
+    from payment.repository import insert_payment
+    app = create_app(reset_on_start=True)
+    with app.db.cursor() as cur:
+        cur.execute("DROP INDEX payments_one_open_or_paid_per_booking")
+    # What production can hold today: refunds and at most one success each.
+    insert_payment(app.db, 7, 2500, "success")
+    insert_payment(app.db, 7, 2500, "refunded")
+    insert_payment(app.db, 8, 1000, "refunded")
+
+    run_migrations(app.db)
+    run_migrations(app.db)
+
+    assert len(attempts(app, 7)) == 2

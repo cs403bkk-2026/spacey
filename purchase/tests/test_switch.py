@@ -26,6 +26,8 @@ MODULES = {
     "compute_metrics": purchase.metrics,
 }
 PAID = {**BOOKING, "paid": True, "card_last4": "4242"}
+# What payment.services.collect returns for a charged card (ADR 0004).
+PAID_OUTCOME = {"status": "paid", "payment_id": 1, "error": None}
 
 
 @pytest.fixture
@@ -203,7 +205,7 @@ def test_pay_checks_the_hold_first(
         stub.answer("POST", "/bookings/1/paid", 200, paid_booking)
     charged = []
     monkeypatch.setattr(
-        "purchase.booking.authorize_card", lambda *args: charged.append(args)
+        "purchase.booking.collect", lambda *args: charged.append(args) or PAID_OUTCOME
     )
 
     response = hub.post("/bookings/1/pay", json=VALID_CARD)
@@ -222,7 +224,7 @@ def test_pay_unknown_booking_is_404(stub, hub, monkeypatch):
     stub.answer("GET", "/bookings/1", 404, err("booking not found"))
     charged = []
     monkeypatch.setattr(
-        "purchase.booking.authorize_card", lambda *args: charged.append(args)
+        "purchase.booking.collect", lambda *args: charged.append(args) or PAID_OUTCOME
     )
 
     response = hub.post("/bookings/1/pay", json=VALID_CARD)
@@ -239,8 +241,9 @@ def test_pay_refused_after_the_charge_is_409_via_service(stub, hub, monkeypatch)
     def charge_then_expire(*args):  # the hold runs out while the card is charged
         stub.answer("GET", "/bookings/1/payable", 409, err("booking hold has expired"))
         stub.answer("POST", "/bookings/1/paid", 409, err("booking hold has expired"))
+        return PAID_OUTCOME
 
-    monkeypatch.setattr("purchase.booking.authorize_card", charge_then_expire)
+    monkeypatch.setattr("purchase.booking.collect", charge_then_expire)
     refunds = []
     monkeypatch.setattr(
         "purchase.booking.refund_payment", lambda conn, **kwargs: refunds.append(kwargs)

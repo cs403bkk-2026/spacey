@@ -24,6 +24,9 @@ PAID_JSON = {
     "amount_cents": 2500, "user_id": 1, "card_last4": "4242",
     "created_at": "2026-10-12T02:48:20.933270+00:00",
 }
+# What payment.services.collect returns (ADR 0004).
+PAID_OUTCOME = {"status": "paid", "payment_id": 1, "error": None}
+DECLINED = {"status": "failed", "payment_id": 1, "error": "payment failed"}
 
 
 @pytest.fixture
@@ -36,9 +39,9 @@ def hub(stub, monkeypatch):
 @pytest.fixture
 def seen(monkeypatch):
     """What the hub did itself: its local charge, mirror and refund."""
-    calls = {"authorize_card": [], "mirror": [], "refund_payment": []}
-    monkeypatch.setattr(purchase.booking, "authorize_card",
-                        lambda *args: calls["authorize_card"].append(args))
+    calls = {"collect": [], "mirror": [], "refund_payment": []}
+    monkeypatch.setattr(purchase.booking, "collect",
+                        lambda *args: calls["collect"].append(args) or PAID_OUTCOME)
     monkeypatch.setattr(purchase.booking.mirror, "booking",
                         lambda row: calls["mirror"].append(row))
     monkeypatch.setattr("app.refund_payment",
@@ -83,7 +86,7 @@ def test_pay_goes_to_the_service(stub, hub, seen, monkeypatch, status, answer, e
     if status is not None:
         assert [r["body"] for r in sent] == [{**CARD, "force_failure": True}]
         assert sent[0]["authorization"] == f"Bearer {TOKEN}"
-    assert seen["authorize_card"] == []
+    assert seen["collect"] == []
     assert len(seen["mirror"]) == (1 if status == 200 else 0)
 
 
@@ -115,8 +118,8 @@ def test_slow_service(stub, hub, seen, monkeypatch, case):
 
 @pytest.mark.parametrize("case", ["url_unset", "row_false"])
 def test_flag_off_keeps_the_local_path(stub, monkeypatch, seen, case):
-    monkeypatch.setattr(purchase.booking, "authorize_card", lambda *args: (
-        seen["authorize_card"].append(args) or (err("payment failed"), 402)))
+    monkeypatch.setattr(purchase.booking, "collect", lambda *args: (
+        seen["collect"].append(args) or DECLINED))
     hub = create_app(reset_on_start=True).test_client()  # client.pays as it is
     if case == "url_unset":
         monkeypatch.delenv("PURCHASE_URL")
@@ -129,7 +132,7 @@ def test_flag_off_keeps_the_local_path(stub, monkeypatch, seen, case):
     response = hub.post("/bookings/1/pay", json=CARD)
 
     assert (response.status_code, response.get_json()) == (402, err("payment failed"))
-    assert len(seen["authorize_card"]) == 1
+    assert len(seen["collect"]) == 1
     assert [r for r in stub.requests if r["path"] == "/bookings/1/pay"] == []
 
 

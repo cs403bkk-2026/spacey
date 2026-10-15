@@ -1,9 +1,12 @@
-"""Payment business rules: card validation and the (mocked) payment decision.
-No Flask, no SQL and no bookings - HTTP lives in api.py, the database in
-repository.py, and purchase.booking owns a booking's paid state."""
+"""Payment business rules: card validation, the (mocked) provider, and the
+functions Purchase calls - collect, payment_status and refund_payment.
+No Flask, no SQL and no bookings - the database lives in repository.py, and
+purchase.booking owns a booking's paid state."""
 
 import re
 from datetime import datetime, timezone
+
+from payment import repository
 
 CARD_NUMBER_RE = re.compile(r"^\d{13,19}$")
 CVC_RE = re.compile(r"^\d{3,4}$")
@@ -46,17 +49,75 @@ def validate_card(card_number, expiry, cvc) -> str | None:
     return None
 
 
-def authorize_card(card_number, expiry, cvc, force_failure=False):
-    """The (mocked) payment decision for one card, knowing nothing about
-    bookings. Returns None if the card is accepted, otherwise (payload,
-    status): 400 if it doesn't look valid (see validate_card), 402 if
-    force_failure asks this attempt to fail."""
+class ProviderUnavailable(Exception):
+    """The provider gave no answer, so the charge may or may not have gone
+    through. The mock never raises it; tests do, to stand in for a timeout."""
+
+
+def charge_card(amount_cents, card_number, expiry, cvc, force_failure=False):
+    """The mocked provider: no network and no real money. Returns None if
+    the charge went through, or the reason it was declined."""
+    if force_failure:
+        return "payment failed"
+    return None
+
+
+# Stored status -> the status collect and payment_status report (ADR 0004).
+REPORTED_STATUS = {"success": "paid", "failed": "failed", "unknown": "unknown"}
+
+
+def outcome(status, payment_id=None, error=None):
+    return {"status": status, "payment_id": payment_id, "error": error}
+
+
+def collect(db, booking_id, amount_cents, card_number, expiry, cvc, force_failure=False):
+    """ADR 0004's collect: charge a booking's amount at most once. Purchase
+    gives the booking's id and stored price; nothing here reads or updates
+    bookings. Returns {"status", "payment_id", "error"} with status:
+    - "paid": charged, now or by an earlier call (then the same payment_id).
+    - "failed": declined, stored as a failed attempt; another try is allowed.
+      Invalid card details also fail, with payment_id None: nothing was tried.
+    - "unknown": an attempt is still in progress or its answer was lost.
+      Nothing is charged again until that attempt is settled.
+    A free booking (amount 0) has nothing to collect: "paid", nothing stored."""
     card_error = validate_card(card_number, expiry, cvc)
     if card_error:
-        return {"error": card_error}, 400
-    if force_failure:
-        return {"error": "payment failed"}, 402
-    return None
+        return outcome("failed", error=card_error)
+    if amount_cents == 0:
+        return outcome("paid")
+
+    while (attempt := repository.start_attempt(
+            db, booking_id, amount_cents, card_number[-4:])) is None:
+        existing = repository.get_open_or_paid_attempt(db, booking_id)
+        if existing is not None:  # another call got there first
+            return outcome(REPORTED_STATUS[existing["status"]], existing["id"])
+        # That attempt failed in the meantime, so this one may start.
+
+    try:
+        declined = charge_card(amount_cents, card_number, expiry, cvc, force_failure)
+    except ProviderUnavailable:
+        # Not a failure: the card may have been charged. The row stays
+        # "unknown", which also blocks a second charge.
+        return outcome("unknown", attempt["id"])
+    if declined:
+        repository.finish_attempt(db, attempt["id"], "failed", reason=declined)
+        return outcome("failed", attempt["id"], declined)
+    repository.finish_attempt(db, attempt["id"], "success")
+    return outcome("paid", attempt["id"])
+
+
+def payment_status(db, booking_id):
+    """ADR 0004's status lookup: {"status", "payment_id"} with status "paid",
+    "unknown" (in progress or answer lost - never proof that nothing was
+    charged), "failed" (the latest attempt was declined) or "none"."""
+    attempt = repository.get_open_or_paid_attempt(db, booking_id)
+    if attempt is None:
+        failed = [p for p in repository.get_payments_for_booking(db, booking_id)
+                  if p["status"] == "failed"]
+        attempt = failed[-1] if failed else None
+    if attempt is None:
+        return {"status": "none", "payment_id": None}
+    return {"status": REPORTED_STATUS[attempt["status"]], "payment_id": attempt["id"]}
 
 
 def refund_payment(

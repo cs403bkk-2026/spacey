@@ -1,6 +1,6 @@
 """HTTP routes for paying a booking. Parses the request, calls purchase.booking
-(which asks payment.services whether the card is accepted), and shapes the
-response - no business rules or SQL here."""
+(which has payment.services collect the price and acts on the outcome), and
+shapes the response - no business rules or SQL here."""
 
 from flask import Blueprint, current_app, jsonify, request
 
