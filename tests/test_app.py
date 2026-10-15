@@ -416,7 +416,7 @@ def test_find_unknown_booking_returns_404():
 def test_cancel_booking_makes_space_available_again():
     client = make_client()
     created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
     ).get_json()
 
     response = client.delete(f"/bookings/{created['id']}")
@@ -424,7 +424,7 @@ def test_cancel_booking_makes_space_available_again():
     assert response.status_code == 200
     assert response.get_json() == created
 
-    spaces = client.get("/spaces").get_json()["spaces"]
+    spaces = client.get("/spaces", query_string=slot(1, 2)).get_json()["spaces"]
     founders_desk = next(s for s in spaces if s["id"] == 1)
     assert founders_desk["available"] is True
 
@@ -437,235 +437,6 @@ def test_cancel_unknown_booking_returns_404():
 
     assert response.status_code == 404
     assert response.get_json() == {"error": "booking not found"}
-
-def test_pay_flips_a_booking_to_paid():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    assert created["paid"] is False
-
-    response = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-
-    assert response.status_code == 200
-    assert response.get_json() == {**created, "paid": True, "card_last4": "4242"}
-    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is True
-
-def test_paying_twice_is_still_paid():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-
-    response = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-
-    assert response.status_code == 200
-    assert response.get_json()["paid"] is True
-
-def test_pay_unknown_booking_returns_404():
-    client = make_client()
-
-    response = client.post("/bookings/999/pay", json=VALID_CARD)
-
-    assert response.status_code == 404
-    assert response.get_json() == {"error": "booking not found"}
-
-def test_paying_with_a_valid_card_succeeds_and_shows_only_last4():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-
-    response = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-
-    assert response.status_code == 200
-    body = response.get_json()
-    assert body["paid"] is True
-    assert body["card_last4"] == "4242"
-    assert "card_number" not in body
-    assert "cvc" not in body
-
-def test_paying_with_a_missing_card_field_is_rejected_and_leaves_it_unpaid():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-
-    for missing in ["card_number", "expiry", "cvc"]:
-        card = {k: v for k, v in VALID_CARD.items() if k != missing}
-        response = client.post(f"/bookings/{created['id']}/pay", json=card)
-
-        assert response.status_code == 400
-        assert "must" in response.get_json()["error"] or "format" in response.get_json()["error"]
-
-    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
-
-def test_paying_with_a_badly_formatted_card_is_rejected():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-
-    cases = [
-        ({**VALID_CARD, "card_number": "4242"}, "card_number"),
-        ({**VALID_CARD, "card_number": "4242abcd42424242"}, "card_number"),
-        ({**VALID_CARD, "cvc": "12"}, "cvc"),
-        ({**VALID_CARD, "cvc": "abc"}, "cvc"),
-        ({**VALID_CARD, "expiry": "13/30"}, "expiry"),
-        ({**VALID_CARD, "expiry": "2030-12"}, "expiry"),
-    ]
-    for card, field in cases:
-        response = client.post(f"/bookings/{created['id']}/pay", json=card)
-
-        assert response.status_code == 400
-        assert field in response.get_json()["error"]
-
-    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
-
-def test_paying_with_a_card_that_fails_the_luhn_check_is_rejected():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-
-    # 4242424242424242 is valid; changing the last digit breaks the checksum
-    response = client.post(
-        f"/bookings/{created['id']}/pay",
-        json={**VALID_CARD, "card_number": "4242424242424241"},
-    )
-
-    assert response.status_code == 400
-    assert response.get_json() == {"error": "card_number is not a valid card number"}
-    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
-
-def test_paying_with_other_luhn_valid_cards_succeeds():
-    client = make_client()
-    # Standard test numbers: Visa 16, Amex 15, a 13-digit and a 19-digit number
-    for number in ["4111111111111111", "378282246310005", "4222222222222", "6011000000000000001"]:
-        created = client.post(
-            "/spaces/1/bookings", json={"member": "annabel", **slot(10 * len(number), 10 * len(number) + 1)}
-        ).get_json()
-
-        response = client.post(
-            f"/bookings/{created['id']}/pay", json={**VALID_CARD, "card_number": number}
-        )
-
-        assert response.status_code == 200, number
-        assert response.get_json()["card_last4"] == number[-4:]
-
-def test_paying_with_an_expired_card_is_rejected():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-
-    response = client.post(
-        f"/bookings/{created['id']}/pay", json={**VALID_CARD, "expiry": "01/20"}
-    )
-
-    assert response.status_code == 400
-    assert response.get_json() == {"error": "card has expired"}
-    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
-
-def test_paying_an_already_paid_booking_again_is_still_a_no_op():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-
-    # no card needed the second time - it's already paid
-    response = client.post(f"/bookings/{created['id']}/pay", json={})
-
-    assert response.status_code == 200
-    assert response.get_json()["paid"] is True
-    assert response.get_json()["card_last4"] == "4242"
-
-def test_failed_payment_leaves_the_booking_unpaid_and_unlock_returns_402():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
-    ).get_json()
-
-    response = client.post(
-        f"/bookings/{created['id']}/pay", json={**VALID_CARD, "force_failure": True}
-    )
-
-    assert response.status_code == 402
-    assert response.get_json() == {"error": "payment failed"}
-    assert client.get(f"/bookings/{created['id']}").get_json()["paid"] is False
-
-    unlock = client.post(f"/bookings/{created['id']}/unlock")
-    assert unlock.status_code == 402
-    assert unlock.get_json() == {"error": "booking is not paid"}
-
-def test_failed_payment_brings_in_no_revenue_and_can_be_retried():
-    client = make_client()
-    client.post(
-        "/spaces",
-        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
-    )
-    booking = client.post(
-        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
-    ).get_json()
-
-    client.post(f"/bookings/{booking['id']}/pay", json={**VALID_CARD, "force_failure": True})
-    after_failure = client.get("/metrics").get_json()
-
-    assert after_failure["revenue_cents"] == 0
-    assert after_failure["unpaid_bookings"] == 1
-
-    retry = client.post(
-        f"/bookings/{booking['id']}/pay", json={**VALID_CARD, "force_failure": False}
-    )
-    after_retry = client.get("/metrics").get_json()
-
-    assert retry.status_code == 200
-    assert retry.get_json()["paid"] is True
-    assert after_retry["revenue_cents"] == 1500
-    assert after_retry["paid_bookings"] == 1
-
-def test_forcing_a_failure_on_an_unknown_booking_returns_404():
-    client = make_client()
-
-    response = client.post("/bookings/999/pay", json={**VALID_CARD, "force_failure": True})
-
-    assert response.status_code == 404
-    assert response.get_json() == {"error": "booking not found"}
-
-def test_forcing_a_failure_on_a_paid_booking_leaves_it_paid():
-    client = make_client()
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
-
-    response = client.post(
-        f"/bookings/{created['id']}/pay", json={**VALID_CARD, "force_failure": True}
-    )
-
-    assert response.status_code == 200
-    assert response.get_json()["paid"] is True
-
-def test_paying_twice_only_counts_revenue_once():
-    client = make_client()
-    client.post(
-        "/spaces",
-        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
-    )
-    booking = client.post(
-        "/spaces/2/bookings", json={"member": "gregory", **slot(1, 2)}
-    ).get_json()
-
-    first = client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
-    second = client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
-    metrics = client.get("/metrics").get_json()
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert metrics["revenue_cents"] == 1500
-    assert metrics["paid_bookings"] == 1
 
 def test_unlock_before_paying_is_rejected():
     client = make_client()
@@ -715,7 +486,7 @@ def test_the_access_code_survives_a_restart():
 
 def test_cancelling_a_booking_removes_its_access_code():
     client = make_client()
-    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)})
+    client.post("/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)})
     client.post("/bookings/1/pay", json=VALID_CARD)
     client.post("/bookings/1/unlock")
 
@@ -964,86 +735,53 @@ def test_booking_member_must_be_a_string():
     assert response.status_code == 400
     assert response.get_json() == {"error": "member must be a string"}
 
-def test_subscribing_returns_an_active_subscription():
+def test_subscribe_answers_410_for_any_name():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+
+    responses = [
+        client.post(f"/members/{name}/subscribe")
+        for name in ("annabel", "%20", "guest")
+    ]
+
+    for response in responses:
+        assert response.status_code == 410
+        assert response.get_json() == {"error": "subscriptions have been removed"}
+    with app.db.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM subscriptions")
+        assert cur.fetchone()["n"] == 0
+
+def test_a_former_subscribers_booking_is_unpaid_at_full_price():
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    with app.db.cursor() as cur:
+        cur.execute("INSERT INTO subscriptions (member) VALUES ('annabel')")
+
+    bookings = [
+        client.post(
+            "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+        ).get_json(),
+        client.post(
+            "/spaces/1/bookings", json={"member": "  ANNABEL ", **slot(3, 4)}
+        ).get_json(),
+    ]
+
+    for booking in bookings:
+        assert booking["paid"] is False
+        assert booking["amount_cents"] == 2500
+        assert booking["card_last4"] is None
+
+def test_booking_body_cannot_set_paid_or_amount():
     client = make_client()
 
-    response = client.post("/members/annabel/subscribe")
-
-    assert response.status_code == 200
-    body = response.get_json()
-    assert body["member"] == "annabel"
-    assert body["active"] is True
-    assert body["started_at"]
-
-def test_subscribing_twice_keeps_the_original_start():
-    client = make_client()
-    first = client.post("/members/annabel/subscribe").get_json()
-
-    second = client.post("/members/annabel/subscribe")
-
-    assert second.status_code == 200
-    assert second.get_json() == first
-
-def test_a_blank_member_name_cannot_subscribe():
-    client = make_client()
-
-    response = client.post("/members/%20/subscribe")
-
-    assert response.status_code == 400
-    assert response.get_json() == {"error": "member name must not be blank"}
-
-def test_a_subscribed_members_booking_is_paid_on_creation():
-    client = make_client()
-    client.post("/members/annabel/subscribe")
-
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(-1, 1)}
-    ).get_json()
-
-    assert created["paid"] is True
-    # no pay step needed to get the access code
-    unlock = client.post(f"/bookings/{created['id']}/unlock")
-    assert unlock.status_code == 200
-
-def test_a_member_without_a_subscription_still_pays_once():
-    client = make_client()
-    client.post("/members/annabel/subscribe")
-
-    created = client.post(
-        "/spaces/1/bookings", json={"member": "gregory", **slot(1, 2)}
-    ).get_json()
-
-    assert created["paid"] is False
-    paid = client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD).get_json()
-    assert paid["paid"] is True
-
-def test_subscription_matches_the_member_name_ignoring_case_and_spaces():
-    client = make_client()
-    client.post("/members/%20Annabel%20/subscribe")
-
-    lower = client.post(
-        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
-    ).get_json()
-    shouting = client.post(
-        "/spaces/1/bookings", json={"member": "  ANNABEL ", **slot(3, 4)}
-    ).get_json()
-
-    assert lower["paid"] is True
-    assert shouting["paid"] is True
-
-def test_a_subscribers_booking_adds_no_per_booking_revenue():
-    client = make_client()
-    client.post(
-        "/spaces",
-        json={"name": "Meeting Room A", "capacity": 6, "price_cents": 1500},
+    response = client.post(
+        "/spaces/1/bookings",
+        json={"member": "annabel", "paid": True, "amount_cents": 0, **slot(1, 2)},
     )
-    client.post("/members/annabel/subscribe")
 
-    client.post("/spaces/2/bookings", json={"member": "annabel", **slot(1, 2)})
-    metrics = client.get("/metrics").get_json()
-
-    assert metrics["paid_bookings"] == 1
-    assert metrics["revenue_cents"] == 0
+    assert response.status_code == 201
+    assert response.get_json()["paid"] is False
+    assert response.get_json()["amount_cents"] == 2500
 
 def test_metrics_reports_spaces_bookings_and_members():
     client = make_client()
@@ -1239,9 +977,7 @@ def test_revenue_stays_the_same_when_the_space_price_changes_later():
     client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
     assert client.get("/metrics").get_json()["revenue_cents"] == 500
 
-    # PATCH can't change a price yet, so change it straight in the database
-    with app.db.cursor() as cur:
-        cur.execute("UPDATE spaces SET price_cents = 2000 WHERE id = 2")
+    client.patch("/spaces/2", json={"price_cents": 2000})
 
     assert client.get("/metrics").get_json()["revenue_cents"] == 500
 
@@ -1274,7 +1010,6 @@ def test_startup_fills_in_the_amount_on_bookings_made_before_the_column_existed(
     with app.db.cursor() as cur:
         cur.execute("SELECT amount_cents FROM bookings")
         assert cur.fetchone()["amount_cents"] == 1500
-    assert client.get("/metrics").get_json()["revenue_cents"] == 1500
 
 def test_health_reports_error_when_database_is_unreachable():
     app = create_app(reset_on_start=True)
@@ -1686,6 +1421,52 @@ def test_payments_reject_values_outside_the_enums():
     from payment.repository import insert_payment
     app = create_app(reset_on_start=True)
     with pytest.raises(psycopg.errors.InvalidTextRepresentation):
-        insert_payment(app.db, 1, 100, "refunded")
+        insert_payment(app.db, 1, 100, "invalid_status")
     with pytest.raises(psycopg.errors.InvalidTextRepresentation):
         insert_payment(app.db, 1, 100, "success", currency="EUR")
+
+
+# --- PT-013: refund on cancellation ---
+
+def test_payments_accept_refunded_status():
+    from payment.repository import insert_payment
+    app = create_app(reset_on_start=True)
+    row = insert_payment(app.db, 1, 100, "refunded")
+    assert row["status"] == "refunded"
+
+
+def test_cancelling_a_paid_booking_records_a_refund():
+    from payment.repository import get_payments_for_booking
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+    client.post(f"/bookings/{created['id']}/pay", json=VALID_CARD)
+
+    delete_resp = client.delete(f"/bookings/{created['id']}")
+    assert delete_resp.status_code == 200
+
+    payments = get_payments_for_booking(app.db, created["id"])
+    refunds = [p for p in payments if p["status"] == "refunded"]
+    assert len(refunds) == 1
+    assert refunds[0]["amount_cents"] == created["amount_cents"]
+    assert refunds[0]["card_last4"] == "4242"
+    assert refunds[0]["reason"] == "cancellation"
+
+
+def test_cancelling_an_unpaid_booking_records_no_refund():
+    from payment.repository import get_payments_for_booking
+    app = create_app(reset_on_start=True)
+    client = app.test_client()
+    created = client.post(
+        "/spaces/1/bookings", json={"member": "annabel", **slot(1, 2)}
+    ).get_json()
+
+    delete_resp = client.delete(f"/bookings/{created['id']}")
+    assert delete_resp.status_code == 200
+
+    payments = get_payments_for_booking(app.db, created["id"])
+    refunds = [p for p in payments if p["status"] == "refunded"]
+    assert len(refunds) == 0
+

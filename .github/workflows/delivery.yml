@@ -37,9 +37,12 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      - run: docker compose up -d --wait purchase
       - run: pytest
         env:
           DATABASE_URL: postgresql://spacey:spacey@localhost:5432/spacey
+          PURCHASE_URL: http://localhost:8002
+          PURCHASE_TOKEN: dev-token
 
   build:
     if: github.event_name == 'push'

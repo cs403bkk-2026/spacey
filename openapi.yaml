@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Spacey API
   description: >
-    A space booking system: find a space, book it, pay once or subscribe,
+    A space booking system: find a space, book it, pay for it,
     and get access through a mocked lock.
 
 
@@ -212,11 +212,12 @@ paths:
       tags: [bookings]
       summary: Book a space.
       description: >
-        Unpaid on creation, unless `member` has an active subscription (see
-        `POST /members/{name}/subscribe`), in which case it is created
-        already paid and costs nothing extra. A later `POST
-        /bookings/{bookingId}/pay` is needed otherwise, before `.../unlock`
-        will work.
+        Unpaid on creation, at the calculated price. `POST
+        /bookings/{bookingId}/pay` is needed before `.../unlock` works.
+        With the Purchase service (`PURCHASE_URL` set), an unpaid booking
+        holds its slot for 15 minutes from creation (SP-R07). After that,
+        another booking may take the slot, and `POST
+        /bookings/{bookingId}/pay` answers 409.
       requestBody:
         required: true
         content:
@@ -322,8 +323,11 @@ paths:
       tags: [bookings]
       summary: Cancel a booking.
       description: >
-        Deletes the booking outright, whether or not it was paid - there is
-        no cancelled/refunded record kept yet (see issue #82).
+        Deletes the booking outright. If the booking was paid, a refund is
+        recorded in the payments table with status 'refunded'.
+        Only before the booking starts (SP-R09): from its start time on, the
+        answer is 409, nothing changes and nothing is refunded.
+
       responses:
         "200":
           description: The booking as it was just before it was deleted.
@@ -332,6 +336,12 @@ paths:
               schema: { $ref: "#/components/schemas/Booking" }
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "409":
+          description: The booking has started, so it can no longer be cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: booking has already started }
 
   /bookings/{bookingId}/pay:
     post:
@@ -347,7 +357,13 @@ paths:
         (no card required for that retry), so a retried request can't
         charge twice. Pass `force_failure: true` with a still-valid card
         to make this attempt fail on purpose, for testing the failure
-        path - the booking is left unpaid.
+        path - the booking is left unpaid. With the Purchase service
+        (`PURCHASE_URL` set), the booking's 15-minute hold (SP-R07) is
+        checked before the card: once it has expired, the answer is 409 and
+        the card is not charged (ADR 0003). With the switch row's `pays`
+        true (PUR-027), the Purchase service checks the hold and charges
+        the card through the Payments service; the answers stay the same,
+        plus 503.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       requestBody:
@@ -396,6 +412,33 @@ paths:
               example: { error: payment failed }
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "409":
+          description: >
+            The booking's 15-minute hold has expired; book again. Only with
+            the Purchase service. Rarely, the hold runs out while the card is
+            being charged and another booking takes the slot: the answer is
+            also 409, and the booking stays unpaid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: booking hold has expired }
+        "500":
+          description: Database failure during payment; check booking status before retrying.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: payment unavailable }
+        "503":
+          description: >
+            Only with the switch row's `pays` true (PUR-027). `payment
+            unavailable`: the Payments service gave no usable answer; the
+            booking stays unpaid and paying again is safe (it is never
+            charged twice). `purchase unavailable`: the Purchase service
+            did not answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: payment unavailable }
 
   /bookings/{bookingId}/unlock:
     post:
@@ -425,17 +468,21 @@ paths:
               example: { error: booking is not paid }
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "503":
+          description: >
+            The access service is unreachable or answered outside its contract
+            (only when the hub runs with ACCESS_URL set). Retrying is safe:
+            the booking keeps one code, and the same one comes back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: access unavailable }
 
   /members/{name}/subscribe:
     post:
       tags: [members]
-      summary: Subscribe a member (mocked).
-      description: >
-        No real provider and no price yet (see issue #112). Subscribing
-        again is a no-op: `started_at` does not change. The name is matched
-        trimmed and lower-cased, so "Annabel" and " annabel " are the same
-        subscriber. While active, every booking that member makes is
-        created already paid, at no extra charge.
+      summary: Removed; always answers 410.
+      deprecated: true
       parameters:
         - name: name
           in: path
@@ -443,26 +490,12 @@ paths:
           schema: { type: string }
           example: annabel
       responses:
-        "200":
-          description: Subscribed (or already was).
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  member:
-                    type: string
-                    description: Trimmed and lower-cased.
-                    example: annabel
-                  active: { type: boolean, example: true }
-                  started_at: { type: string, format: date-time }
-                required: [member, active, started_at]
-        "400":
-          description: The name is blank after trimming.
+        "410":
+          description: Subscriptions have been removed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { error: "member name must not be blank" }
+              example: { error: "subscriptions have been removed" }
 
   /register:
     post:
@@ -715,7 +748,7 @@ components:
             What this booking was actually charged: the space's per-hour
             rate times the hours booked, fixed at the price when it was
             made (see issue #78) - a later price change does not affect
-            it. 0 for a subscriber's booking.
+            it. 0 on old bookings a subscription covered.
           example: 1500
         user_id:
           type: integer

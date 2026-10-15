@@ -1,19 +1,25 @@
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime
 
 import psycopg
 from flask import Flask, jsonify, redirect, request, session
 from psycopg.rows import dict_row
 
-from access import issue_access_code
-from payment.api import payment_bp
+from access import issue_access_code, revoke_on_cancel
+import access.client
+from access.migrations import run_migrations as run_access_migrations
 from payment.migrations import run_migrations
+from payment.services import refund_payment
 # Called qualified, since route functions below reuse names like get_space.
 import purchase.booking
+import purchase.client
 import purchase.member
+import purchase.metrics
 import purchase.schema
 import purchase.space
+from purchase.api import booking_bp
+from purchase.booking import booking_to_json
 from purchase.member import subscribe
 from purchase.space import booked_space_ids
 
@@ -49,6 +55,8 @@ def get_connection(database_url: str) -> psycopg.Connection:
         purchase.schema.create_tables(cur)
     # PT-016: separate payments table (enum status and currency).
     run_migrations(conn)
+    # ACC-10: Access owns its table; it references bookings, so it runs after.
+    run_access_migrations(conn)
     return conn
 
 
@@ -79,92 +87,6 @@ def parse_window(args) -> tuple[tuple | None, str | None]:
     return (start_time, end_time), None
 
 
-def booking_to_json(row: dict) -> dict:
-    return {
-        **row,
-        "start_time": row["start_time"].astimezone(timezone.utc).isoformat(),
-        "end_time": row["end_time"].astimezone(timezone.utc).isoformat(),
-        "created_at": row["created_at"].astimezone(timezone.utc).isoformat(),
-    }
-
-
-def compute_metrics(cur) -> dict:
-    cur.execute("SELECT COUNT(*) AS count FROM spaces")
-    total_spaces = cur.fetchone()["count"]
-
-    cur.execute(
-        "SELECT COUNT(*) AS total, "
-        "COUNT(*) FILTER (WHERE paid) AS paid, "
-        "COUNT(*) FILTER (WHERE NOT paid) AS unpaid "
-        "FROM bookings"
-    )
-    booking_counts = cur.fetchone()
-
-    cur.execute("SELECT COUNT(DISTINCT member) AS count FROM bookings")
-    total_members = cur.fetchone()["count"]
-
-    cur.execute(
-        "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM bookings WHERE paid"
-    )
-    revenue_cents = cur.fetchone()["total"]
-
-    # Booked hours over the next 7 days, clipped to that window, across all
-    # spaces - same overlap rule used everywhere else (starts before the
-    # window ends AND ends after the window starts).
-    cur.execute(
-        "SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("
-        "LEAST(end_time, now() + interval '7 days') - GREATEST(start_time, now())"
-        ")) / 3600.0), 0) AS hours "
-        "FROM bookings "
-        "WHERE start_time < now() + interval '7 days' AND end_time > now()"
-    )
-    booked_hours = float(cur.fetchone()["hours"])
-    available_hours = total_spaces * 7 * 24
-    utilization = booked_hours / available_hours if available_hours > 0 else 0.0
-
-    cur.execute(
-        "SELECT COUNT(*) AS count FROM ("
-        "SELECT member FROM bookings GROUP BY member HAVING COUNT(*) > 1"
-        ") repeat_members"
-    )
-    repeat_members = cur.fetchone()["count"]
-    repeat_member_rate = repeat_members / total_members if total_members > 0 else 0.0
-
-    payment_conversion = (
-        booking_counts["paid"] / booking_counts["total"]
-        if booking_counts["total"] > 0
-        else 0.0
-    )
-
-    avg_revenue_cents_per_paid_booking = (
-        round(revenue_cents / booking_counts["paid"])
-        if booking_counts["paid"] > 0
-        else 0
-    )
-
-    cur.execute(
-        "SELECT s.id, s.name, "
-        "COALESCE(SUM(b.amount_cents) FILTER (WHERE b.paid), 0) AS revenue_cents "
-        "FROM spaces s LEFT JOIN bookings b ON b.space_id = s.id "
-        "GROUP BY s.id, s.name ORDER BY s.id"
-    )
-    revenue_by_space = cur.fetchall()
-
-    return {
-        "spaces": total_spaces,
-        "bookings": booking_counts["total"],
-        "paid_bookings": booking_counts["paid"],
-        "unpaid_bookings": booking_counts["unpaid"],
-        "members": total_members,
-        "revenue_cents": revenue_cents,
-        "utilization": utilization,
-        "repeat_member_rate": repeat_member_rate,
-        "payment_conversion": payment_conversion,
-        "avg_revenue_cents_per_paid_booking": avg_revenue_cents_per_paid_booking,
-        "revenue_by_space": revenue_by_space,
-    }
-
-
 def reset_tables(conn: psycopg.Connection) -> None:
     """Wipe all rows and restart ids. Only used for tests and an opt-in
     local reset (RESET_DB_ON_START=true) - off by default, so a real
@@ -174,6 +96,7 @@ def reset_tables(conn: psycopg.Connection) -> None:
             "TRUNCATE access, bookings, spaces, subscriptions, users, payments "
             "RESTART IDENTITY CASCADE"
         )
+    purchase.client.reset_for_tests()
 
 
 def create_app(
@@ -185,12 +108,15 @@ def create_app(
 
     app = Flask(__name__)
     app.secret_key = SECRET_KEY
+    app.config["DATABASE_URL"] = database_url  # purchase/mirror.py's connection
     app.db = get_connection(database_url)
-    app.register_blueprint(payment_bp)
+    app.register_blueprint(booking_bp)
+    purchase.client.init_app(app)
+    access.client.init_app(app)
     if reset_on_start:
         reset_tables(app.db)
     with app.db.cursor() as cur:
-        purchase.space.seed_starter_space(cur)
+        purchase.schema.seed_starter_space(cur)
 
     @app.get("/")
     def index():
@@ -375,16 +301,44 @@ def create_app(
     @app.delete("/bookings/<int:booking_id>")
     def cancel_booking(booking_id):
         with app.db.cursor() as cur:
+            refusal = purchase.booking.check_cancellable(cur, booking_id)
+            if refusal is not None:  # SP-R09: unknown, or already started
+                payload, status = refusal
+                return jsonify(payload), status
             row = purchase.booking.cancel_booking(cur, booking_id)
 
         if row is None:
             return jsonify(error="booking not found"), 404
 
+        revoke_on_cancel(booking_id)  # the code stops working; never changes this answer
+
+        # PUR-027: the local refund runs only when our service refunded
+        # nothing: it has no Payments settings, or Payments has no charge
+        # for the booking (charged here before the flag, or in a rollback).
+        refund = row.pop("refund", None)  # what our service's refund did
+        if row["paid"] and row["amount_cents"] > 0 and refund in (None, "no_charge"):
+            refund_payment(
+                app.db,
+                booking_id=row["id"],
+                amount_cents=row["amount_cents"],
+                card_last4=row.get("card_last4"),
+                reason="cancellation",
+            )
+
         return jsonify(booking_to_json(row))
 
     @app.post("/bookings/<int:booking_id>/unlock")
     def unlock_booking(booking_id):
-        payload, status = issue_access_code(booking_id)
+        # Purchase decides whether the booking may be unlocked; Access only
+        # issues the code (ACC-10).
+        with app.db.cursor() as cur:
+            refusal = purchase.booking.check_unlockable(cur, booking_id)
+            # Purchase's facts for Access (its times); Access never reads bookings.
+            booking = None if refusal else purchase.booking.get_booking(cur, booking_id)
+        if refusal is not None:
+            payload, status = refusal
+            return jsonify(payload), status
+        payload, status = issue_access_code(booking_id, booking)
         return jsonify(payload), status
 
     @app.post("/members/<name>/subscribe")
@@ -396,7 +350,7 @@ def create_app(
     @app.get("/metrics")
     def metrics():
         with app.db.cursor() as cur:
-            data = compute_metrics(cur)
+            data = purchase.metrics.compute_metrics(cur)
 
         return jsonify(**data)
 
