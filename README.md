@@ -91,6 +91,55 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 - [ADR 0001: Move reporting to Grafana](docs/adr/0001-move-reporting-to-grafana.md)
 - [ADR 0002: Separate the browser client](docs/adr/0002-separate-frontend-repository.md)
 
+## Modules
+
+### Purchase (`purchase/`)
+
+- **Data:** `spaces`, `bookings`, `subscriptions`, `users`. `purchase/schema.py` also creates
+  `access` and `bookings.card_last4`, which other modules use.
+- **Rules:** a booking's end is after its start, party size is 1 to the space's capacity, and
+  bookings for the same space can't overlap (back-to-back is fine; Postgres also enforces this
+  with `no_overlapping_bookings`). The price is the hourly rate prorated to the booked time and
+  saved on the booking. A subscriber's booking is paid at once and costs 0. A blank member name
+  becomes `guest`.
+- **Dependencies:** Postgres (with `btree_gist`); `app.py` calls into it for every route.
+- **Open boundary:** schema setup still covers tables that belong to other modules.
+
+### Payment (`payment/`)
+
+#### Agreed architecture with Purchase (target, not built yet)
+
+Payments only handles payments: it validates mock card details, processes and records mock
+payments, and returns a success, failed or unknown outcome to Purchase. It does not read or
+update bookings. Purchase owns booking prices, booking updates and requests to Access.
+
+- **Data:** the `payments` table (migration `001_create_payments.sql`) only. Amounts are
+  integer USD cents (`amount_cents`: 4500 = $45.00).
+- **Rules:** after a failure another attempt is allowed; after a success a repeated operation
+  returns the same result without creating another payment. Unknown outcomes are reported
+  separately from failures. Full card numbers and CVCs are never stored or logged, and
+  unknown historical details are preserved.
+- **Interface:** Purchase sends `booking_id`, `amount_cents`, `currency` (USD),
+  `card_number`, `expiry` and `cvc`. Payments returns success (`payment_id`, `booking_id`,
+  `amount_cents`, `currency`), failure with a reason, or an unknown outcome.
+- **Purchase's side:** after a success, Purchase marks its own booking paid and requests an
+  access code from Access. After a failed or unknown outcome it keeps the booking unpaid and
+  grants no access.
+
+#### Current implementation (differs from the agreement)
+
+- **Data:** the pay flow writes `paid` and `card_last4` on `bookings`. Nothing is recorded in
+  `payments` yet (only tests call `insert_payment`), so paid status lives only on the booking.
+- **Rules:** the card needs 13-19 digits, a valid Luhn checksum, a 3-4 digit CVC and an
+  unexpired `MM/YY` expiry. Only the last 4 digits are stored. Paying a booking that's already
+  paid returns it unchanged. `force_failure: true` returns 402. The provider is mocked. There
+  is no unknown outcome yet.
+- **Dependencies:** Payment reads and updates the `bookings` table owned by Purchase
+  (`repository.get_booking`, `repository.mark_paid`), even though the migration says "Payment
+  never touches Bookings". `access.py` (`/unlock`) and `/metrics` rely on `bookings.paid`.
+- **Gap to close:** move the booking update out of Payment into Purchase, record every
+  attempt in `payments`, and return the agreed outcome instead of the booking.
+
 ## API reference
 
 Every JSON endpoint is documented in detail in [openapi.yaml](openapi.yaml) (OpenAPI 3.0) - request
