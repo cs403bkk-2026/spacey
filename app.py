@@ -116,7 +116,7 @@ def create_app(
     if reset_on_start:
         reset_tables(app.db)
     with app.db.cursor() as cur:
-        purchase.space.seed_starter_space(cur)
+        purchase.schema.seed_starter_space(cur)
 
     @app.get("/")
     def index():

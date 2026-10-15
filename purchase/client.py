@@ -3,6 +3,7 @@
 One function per wrapper in purchase/: same name, same arguments minus `cur`,
 returning what the old SQL returns. A call that gets no answer the old SQL
 could have given raises PurchaseUnavailable, which the hub answers with 503.
+Unset or empty, every call raises PurchaseUnavailable (503).
 """
 
 import json
@@ -14,12 +15,16 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import flask
-from psycopg.errors import ReadOnlySqlTransaction
 
 from shared.logger import logger
 
 TIMEOUT_S = 1.5
 USER_COLUMNS = "id, email"
+BOOKING_COLUMNS = (
+    "id, space_id, member, paid, start_time, end_time, "
+    "amount_cents, user_id, card_last4, created_at"
+)
+SPACE_COLUMNS = "id, name, capacity, price_cents"
 TIMES = ("start_time", "end_time", "created_at")
 
 
@@ -28,19 +33,12 @@ class PurchaseUnavailable(Exception):
 
 
 def enabled() -> bool:
-    """The service answers only with PURCHASE_URL set and the switch on."""
-    return bool(os.getenv("PURCHASE_URL")) and switch_state() == "on"
-
-
-def switch_state() -> str:
-    """'off', 'frozen' or 'on': purchase_switch, which the Purchase team sets
-    with its own database login (PUR-025). Read on every call, so a change
-    takes effect at once, with no restart."""
-    with flask.current_app.db.cursor() as cur:
-        return cur.execute("SELECT state FROM purchase_switch").fetchone()["state"]
+    return bool(os.getenv("PURCHASE_URL"))
 
 
 def call(method, path, body=None, params=None, expect=(200,)):
+    if not enabled():  # no old SQL is left to fall back to
+        raise PurchaseUnavailable(f"{method} {path}: PURCHASE_URL is not set")
     url = os.environ["PURCHASE_URL"].rstrip("/") + path
     if params:
         url += "?" + urlencode(params)
@@ -83,14 +81,11 @@ def row(data, columns) -> dict:
     return kept
 
 
-# Imported on use: booking.py, member.py and space.py import this module.
 def booking_row(data) -> dict:
-    from purchase.booking import BOOKING_COLUMNS
     return row(data, BOOKING_COLUMNS)
 
 
 def space_row(data) -> dict:
-    from purchase.space import SPACE_COLUMNS
     return row(data, SPACE_COLUMNS)
 
 
@@ -262,8 +257,7 @@ def check_link() -> None:
 
 
 def init_app(app) -> None:
-    """A broken link, or an old table frozen read-only (SQLSTATE 25006,
-    the freeze at the switch), answers 503: never a 500, a false 404 or a 401."""
+    """A broken link answers 503: never a 500, a false 404 or a 401."""
 
     def unavailable(error):
         # Method, path and reason only: never a body, a token or SQL.
@@ -275,4 +269,3 @@ def init_app(app) -> None:
         return flask.jsonify(error="purchase unavailable"), 503
 
     app.register_error_handler(PurchaseUnavailable, unavailable)
-    app.register_error_handler(ReadOnlySqlTransaction, unavailable)
