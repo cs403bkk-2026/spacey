@@ -15,10 +15,29 @@ services:
     environment:
       APP_REVISION: compose
       DATABASE_URL: postgresql://spacey:spacey@db:5432/spacey
+      PURCHASE_URL: http://purchase:8000
+      PURCHASE_TOKEN: dev-token
     ports:
       - "8000:8000"
     depends_on:
       - db
+      - purchase
+
+  purchase-service-db:
+    image: postgres:16
+    environment: {POSTGRES_USER: purchase, POSTGRES_PASSWORD: purchase, POSTGRES_DB: purchase}
+    healthcheck: {test: ["CMD", "pg_isready", "-U", "purchase"], interval: 2s, retries: 30}
+
+  purchase:
+    build: https://github.com/cs403bkk-2026/spacey-purchase.git#9d253337a9d97ddac62929426305d5ed55565038
+    environment:
+      DATABASE_URL: postgresql://purchase:purchase@purchase-service-db:5432/purchase
+      PURCHASE_TOKEN: dev-token
+      PURCHASE_TEST_RESET: "1"      # spacey's tests reset it through /test/reset
+      SEED_STARTER_SPACE: "true"    # space 1, which spacey's tests book
+    ports: ["8002:8000"]
+    depends_on: {purchase-service-db: {condition: service_healthy}}
+    healthcheck: {test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"], interval: 2s, retries: 30}
 
 volumes:
   db-data:

@@ -468,6 +468,15 @@ paths:
               example: { error: booking is not paid }
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "503":
+          description: >
+            The access service is unreachable or answered outside its contract
+            (only when the hub runs with ACCESS_URL set). Retrying is safe:
+            the booking keeps one code, and the same one comes back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: access unavailable }
 
   /members/{name}/subscribe:
     post:

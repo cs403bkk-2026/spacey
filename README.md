@@ -15,9 +15,9 @@ Requires Python 3.12 and Docker.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-docker compose up db -d
-DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey pytest
-DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey flask --app app run --port 5001 --debug
+docker compose up -d --wait db purchase
+DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey PURCHASE_URL=http://localhost:8002 PURCHASE_TOKEN=dev-token pytest
+DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey PURCHASE_URL=http://localhost:8002 PURCHASE_TOKEN=dev-token flask --app app run --port 5001 --debug
 ```
 
 The health check is at <http://127.0.0.1:5001/health>. This process is the JSON API.
@@ -33,7 +33,7 @@ A few things that trip people up the first time:
   default port fails silently or serves the wrong thing. Use `--port 5001` (or any other free
   port) instead.
 - **If `flask run` exits with `Could not connect to the database`**, Postgres isn't running yet -
-  run `docker compose up db -d` first. See [Configuration](#configuration) below for every
+  run `docker compose up -d --wait db purchase` first. See [Configuration](#configuration) below for every
   variable this app reads.
 
 To exercise the full container stack instead (app + database together, closer to the deployed
@@ -51,8 +51,8 @@ Payment logs include only booking ID and fixed outcomes. Set `LOG_LEVEL=DEBUG`
 to include payment start events; the default is `INFO`. Expected rejections use
 `WARNING`; database failures use `ERROR` without database diagnostics or card data.
 
-The app reads these environment variables. None are required to run locally - every one has a
-development-only default - but a real deployment should set all of them explicitly.
+The app reads these environment variables. `PURCHASE_URL` and `PURCHASE_TOKEN` are required; the
+others have development-only defaults, but a real deployment should set all of them explicitly.
 
 | Variable            | What it's for                                                                 | Default (local only)                              |
 |----------------------|-------------------------------------------------------------------------------|-----------------------------------------------------|
@@ -61,8 +61,8 @@ development-only default - but a real deployment should set all of them explicit
 | `RESET_DB_ON_START`  | If `true`, wipes all tables on startup. Used by tests; never set this in a real deployment or you will delete real data. | `false` |
 | `SECRET_KEY`         | Signs the login session cookie. **Must** be set to a real secret in any deployment - the default is public (it's printed right here in this file), so anyone could forge a session cookie claiming to be any user. The app would still run fine without it set, which is exactly what makes this easy to forget. | `dev-secret-key-not-for-production` |
 | `REPORTING_URL`      | Where `GET /dashboard` redirects (the Grafana report). | `https://grafana.cs403bkk26.space/d/spacey-reporting` |
-| `PURCHASE_URL`       | The Purchase service (spacey-purchase). Set, the `purchase/` functions call it; empty or unset, they run the old SQL on `DATABASE_URL`. If set and the service cannot answer, those routes answer `503 {"error": "purchase unavailable"}`. | empty (old SQL) |
-| `PURCHASE_TOKEN`     | The bearer token sent to the Purchase service. Set only in the Nomad variable `nomad/jobs/spacey` (`purchase_token`); never committed. | empty |
+| `PURCHASE_URL`       | The Purchase service (spacey-purchase), which the `purchase/` functions call. Required. Unset or empty: every Purchase route answers 503. If the service cannot answer, those routes answer `503 {"error": "purchase unavailable"}` too. | none (`http://localhost:8002` with compose) |
+| `PURCHASE_TOKEN`     | The bearer token sent to the Purchase service. Set only in the Nomad variable `nomad/jobs/spacey` (`purchase_token`); never committed. Local runs and CI use `dev-token` (`compose.yaml`). | empty |
 
 `/pay` follows one more flag, the column `pays` on the switch row `purchase_switch` (PUR-027),
 which the Purchase team sets with its own database login. `false` (the default): `/pay` charges
