@@ -4,6 +4,7 @@ a test says otherwise."""
 
 import time
 
+import psycopg
 import pytest
 from test_client import (  # noqa: F401  (stub is a fixture)
     BOOKING, PAYABLE, TOKEN, closed_port_url, err, stub,
@@ -145,6 +146,33 @@ def test_pays_reads_the_switch_row(stub, case, expected):
     finally:
         with app.db.cursor() as cur:
             cur.execute("UPDATE purchase_switch SET pays = false")
+
+
+def test_pays_falls_back_when_the_row_is_unreadable(stub, monkeypatch):
+    class BrokenDB:
+        def cursor(self):
+            raise psycopg.OperationalError("database down")
+
+    warnings = []
+    monkeypatch.setattr(client.logger, "warning",
+                        lambda msg, *args: warnings.append(msg % args))
+    app = create_app(reset_on_start=True)
+    with app.app_context():
+        monkeypatch.setattr(app, "db", BrokenDB())
+
+        assert client.pays() is False
+    assert warnings == ["purchase pays flag unreadable (OperationalError): paying here"]
+
+
+def test_an_unavailable_refund_is_logged(stub, hub, seen, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(client.logger, "warning",
+                        lambda msg, *args: warnings.append(msg % args))
+    stub.answer("GET", "/bookings/1/cancellable", 204)
+    stub.answer("DELETE", "/bookings/1", 200, {**PAID, "refund": "unavailable"})
+
+    assert hub.delete("/bookings/1").status_code == 200
+    assert warnings == ["purchase cancel booking_id=1 refund=unavailable"]
 
 
 @pytest.mark.parametrize("refund,local_refunds", [

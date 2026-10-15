@@ -60,6 +60,7 @@ def test_same_booking_reaches_mark_paid_once(monkeypatch, concurrent):
             charges.append(args)  # returns None: the card is accepted
 
     monkeypatch.setenv("PURCHASE_URL", "http://purchase.test")
+    monkeypatch.setattr(booking_module.client, "pays", lambda: False)  # PUR-027's flag off
     monkeypatch.setattr(booking_module, "get_booking", get_booking)
     monkeypatch.setattr(
         booking_module,

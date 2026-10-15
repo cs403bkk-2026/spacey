@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import flask
+import psycopg
 
 from shared.logger import logger
 
@@ -43,8 +44,15 @@ def pays() -> bool:
     once, with no restart."""
     if not enabled():
         return False
-    with flask.current_app.db.cursor() as cur:
-        return cur.execute("SELECT pays FROM purchase_switch").fetchone()["pays"]
+    try:
+        with flask.current_app.db.cursor() as cur:
+            return cur.execute("SELECT pays FROM purchase_switch").fetchone()["pays"]
+    except psycopg.Error as error:
+        # /pay must not fail on its flag: charging here is always safe, as a
+        # cancel then finds no charge at Payments and refunds here.
+        logger.warning("purchase pays flag unreadable (%s): paying here",
+                       type(error).__name__)
+        return False
 
 
 def call(method, path, body=None, params=None, expect=(200,), timeout=TIMEOUT_S):
@@ -255,6 +263,9 @@ def cancel_booking(booking_id) -> dict | None:
     row = booking_row(payload)
     if "refund" in payload:
         row["refund"] = payload["refund"]
+        if payload["refund"] == "unavailable":  # Payments did not answer
+            logger.warning("purchase cancel booking_id=%s refund=unavailable",
+                           booking_id)
     return row
 
 

@@ -66,7 +66,7 @@ others have development-only defaults, but a real deployment should set all of t
 
 `/pay` follows one more flag, the column `pays` on the switch row `purchase_switch` (PUR-027),
 which the Purchase team sets with its own database login. `false` (the default): `/pay` charges
-here, as before. `true`, with `PURCHASE_URL` set and the switch `on`: `/pay` goes to the Purchase
+here, as before. `true`, with `PURCHASE_URL` set: `/pay` goes to the Purchase
 service, which charges through Payments' API; the hub mirrors the paid row. It is read on every
 call, so a change takes effect at once, with no restart. A paid cancel is refunded here only when
 the service refunded nothing (Payments holds no charge for the booking, or the service has no
