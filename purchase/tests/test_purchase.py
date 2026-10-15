@@ -166,6 +166,8 @@ def pay(monkeypatch, booking=UNPAID, payable=(PENDING,), paid_row=PAID,
         monkeypatch.delenv("PURCHASE_URL", raising=False)
     else:
         monkeypatch.setenv("PURCHASE_URL", url)
+        # PUR-027's flag off: /pay runs here (test_pay_switch covers it on).
+        monkeypatch.setattr(purchase.booking.client, "pays", lambda: False)
     monkeypatch.setattr(purchase.booking, "get_booking", lambda cur, i: booking)
     monkeypatch.setattr(purchase.booking, "check_payable", check_payable)
     monkeypatch.setattr(purchase.booking, "authorize_card", authorize_card)

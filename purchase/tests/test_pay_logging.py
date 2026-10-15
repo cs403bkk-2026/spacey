@@ -22,6 +22,8 @@ class PayLoggingTest(unittest.TestCase):
             patch.dict(os.environ, {"PURCHASE_URL": "http://purchase.test"})
         )
         self.enterContext(patch.object(booking, "check_payable", return_value=PAYABLE))
+        # PUR-027's flag off: /pay runs here, as these tests were written for.
+        self.enterContext(patch.object(booking.client, "pays", return_value=False))
 
     def test_outcomes_exclude_card_data(self):
         now = datetime.now(timezone.utc)

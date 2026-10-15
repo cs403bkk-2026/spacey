@@ -84,6 +84,12 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
     retried request can't break the flow or charge twice - and doesn't need
     a card either. Only the card's last 4 digits are ever stored.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
+    if client.pays():  # PUR-027: the service charges through Payments
+        payload, status = client.mark_booking_paid(
+            booking_id, card_number, expiry, cvc, force_failure)
+        if status == 200:
+            mirror.booking(payload)  # PUR-023's mirror
+        return payload, status
     logger.debug("payment booking_id=%s outcome=started", booking_id)
     try:
         row = get_booking(cur, booking_id)

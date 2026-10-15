@@ -326,7 +326,7 @@ def test_timeout_no_retry(monkeypatch):
     started = time.monotonic()
 
     with pytest.raises(client.PurchaseUnavailable):
-        client.cancel_booking(1)
+        client.get_booking(1)  # TIMEOUT_S; cancel_booking waits SLOW_TIMEOUT_S
 
     elapsed = time.monotonic() - started
     time.sleep(0.2)  # a retry would connect again within this time
