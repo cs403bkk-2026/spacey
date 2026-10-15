@@ -15,9 +15,9 @@ Requires Python 3.12 and Docker.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-docker compose up db -d
-DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey pytest
-DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey flask --app app run --port 5001 --debug
+docker compose up -d --wait db purchase
+DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey PURCHASE_URL=http://localhost:8002 PURCHASE_TOKEN=dev-token pytest
+DATABASE_URL=postgresql://spacey:spacey@localhost:5433/spacey PURCHASE_URL=http://localhost:8002 PURCHASE_TOKEN=dev-token flask --app app run --port 5001 --debug
 ```
 
 The health check is at <http://127.0.0.1:5001/health>. This process is the JSON API.
@@ -33,7 +33,7 @@ A few things that trip people up the first time:
   default port fails silently or serves the wrong thing. Use `--port 5001` (or any other free
   port) instead.
 - **If `flask run` exits with `Could not connect to the database`**, Postgres isn't running yet -
-  run `docker compose up db -d` first. See [Configuration](#configuration) below for every
+  run `docker compose up -d --wait db purchase` first. See [Configuration](#configuration) below for every
   variable this app reads.
 
 To exercise the full container stack instead (app + database together, closer to the deployed
