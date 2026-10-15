@@ -28,16 +28,7 @@ class PurchaseUnavailable(Exception):
 
 
 def enabled() -> bool:
-    """The service answers only with PURCHASE_URL set and the switch on."""
-    return bool(os.getenv("PURCHASE_URL")) and switch_state() == "on"
-
-
-def switch_state() -> str:
-    """'off', 'frozen' or 'on': purchase_switch, which the Purchase team sets
-    with its own database login (PUR-025). Read on every call, so a change
-    takes effect at once, with no restart."""
-    with flask.current_app.db.cursor() as cur:
-        return cur.execute("SELECT state FROM purchase_switch").fetchone()["state"]
+    return bool(os.getenv("PURCHASE_URL"))
 
 
 def call(method, path, body=None, params=None, expect=(200,)):

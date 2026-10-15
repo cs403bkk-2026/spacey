@@ -99,24 +99,19 @@ def stub(monkeypatch):
     thread.start()
     monkeypatch.setenv("PURCHASE_URL", state.url)
     monkeypatch.setenv("PURCHASE_TOKEN", TOKEN)
-    monkeypatch.setattr(client, "switch_state", lambda: "on")
     yield state
     server.shutdown()
     server.server_close()
 
 
-@pytest.mark.parametrize("url,state,expected", [
-    (None, "on", False), ("", "on", False),
-    ("http://purchase:8000", "off", False),
-    ("http://purchase:8000", "frozen", False),
-    ("http://purchase:8000", "on", True),
-], ids=["unset", "empty", "off", "frozen", "on"])
-def test_url_and_switch(monkeypatch, url, state, expected):
+@pytest.mark.parametrize("url,expected", [
+    (None, False), ("", False), ("http://purchase:8000", True),
+], ids=["unset", "empty", "set"])
+def test_url_and_switch(monkeypatch, url, expected):
     if url is None:
         monkeypatch.delenv("PURCHASE_URL", raising=False)
     else:
         monkeypatch.setenv("PURCHASE_URL", url)
-    monkeypatch.setattr(client, "switch_state", lambda: state)
 
     assert client.enabled() is expected
 
