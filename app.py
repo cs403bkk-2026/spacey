@@ -7,6 +7,7 @@ from flask import Flask, jsonify, redirect, request, session
 from psycopg.rows import dict_row
 
 from access import issue_access_code
+import access.client
 from access.migrations import run_migrations as run_access_migrations
 from payment.migrations import run_migrations
 from payment.services import refund_payment
@@ -111,6 +112,7 @@ def create_app(
     app.db = get_connection(database_url)
     app.register_blueprint(booking_bp)
     purchase.client.init_app(app)
+    access.client.init_app(app)
     if reset_on_start:
         reset_tables(app.db)
     with app.db.cursor() as cur:
