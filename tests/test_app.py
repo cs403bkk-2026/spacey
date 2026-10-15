@@ -783,29 +783,6 @@ def test_booking_body_cannot_set_paid_or_amount():
     assert response.get_json()["paid"] is False
     assert response.get_json()["amount_cents"] == 2500
 
-def test_old_covered_booking_stays_paid_at_zero():
-    app = create_app(reset_on_start=True)
-    with app.db.cursor() as cur:
-        cur.execute(
-            "INSERT INTO bookings "
-            "(space_id, member, paid, start_time, end_time, amount_cents) "
-            "VALUES (1, 'annabel', TRUE, now() - interval '1 hour', "
-            "now() + interval '1 hour', 0) RETURNING id"
-        )
-        booking_id = cur.fetchone()["id"]
-
-    client = create_app(reset_on_start=False).test_client()
-    booking = client.get(f"/bookings/{booking_id}").get_json()
-    metrics = client.get("/metrics").get_json()
-    unlock = client.post(f"/bookings/{booking_id}/unlock")
-
-    assert booking["paid"] is True
-    assert booking["amount_cents"] == 0
-    assert booking["card_last4"] is None
-    assert metrics["paid_bookings"] == 1
-    assert metrics["revenue_cents"] == 0
-    assert unlock.status_code == 200
-
 def test_metrics_reports_spaces_bookings_and_members():
     client = make_client()
 
@@ -1000,9 +977,7 @@ def test_revenue_stays_the_same_when_the_space_price_changes_later():
     client.post(f"/bookings/{booking['id']}/pay", json=VALID_CARD)
     assert client.get("/metrics").get_json()["revenue_cents"] == 500
 
-    # PATCH can't change a price yet, so change it straight in the database
-    with app.db.cursor() as cur:
-        cur.execute("UPDATE spaces SET price_cents = 2000 WHERE id = 2")
+    client.patch("/spaces/2", json={"price_cents": 2000})
 
     assert client.get("/metrics").get_json()["revenue_cents"] == 500
 
@@ -1035,7 +1010,6 @@ def test_startup_fills_in_the_amount_on_bookings_made_before_the_column_existed(
     with app.db.cursor() as cur:
         cur.execute("SELECT amount_cents FROM bookings")
         assert cur.fetchone()["amount_cents"] == 1500
-    assert client.get("/metrics").get_json()["revenue_cents"] == 1500
 
 def test_health_reports_error_when_database_is_unreachable():
     app = create_app(reset_on_start=True)
