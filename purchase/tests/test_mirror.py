@@ -14,7 +14,7 @@ import purchase.booking
 import purchase.member
 import purchase.space
 from purchase import client, mirror
-from purchase.booking import BOOKING_COLUMNS
+from purchase.client import BOOKING_COLUMNS
 
 PAID = {**BOOKING, "paid": True, "card_last4": "4242"}
 # /pay asks check_payable before the card is charged (PUR-021).
@@ -166,20 +166,21 @@ def test_a_refused_write_is_not_mirrored(stub, writes, call, method, path, statu
 
 
 def test_url_unset_never_mirrors(stub, hub, writes, monkeypatch):
+    """With the URL unset there is no old SQL to fall back to: each write
+    answers 503, and the mirror writes nothing."""
     monkeypatch.delenv("PURCHASE_URL")
-    monkeypatch.setattr("app.refund_payment", lambda conn, **kwargs: None)
     start = "2030-01-01T10:00:00Z"
     window = {"start_time": start, "end_time": "2030-01-01T11:00:00Z"}
 
     assert hub.post("/register", json={
-        "email": "a@b.co", "password": "hunter22"}).status_code == 201
+        "email": "a@b.co", "password": "hunter22"}).status_code == 503
     assert hub.post("/spaces", json={
-        "name": "Desk", "capacity": 2, "price_cents": 1000}).status_code == 201
-    assert hub.patch("/spaces/2", json={"name": "Desk 2"}).status_code == 200
-    assert hub.post("/spaces/2/bookings", json=window).status_code == 201
-    assert hub.post("/bookings/1/pay", json=VALID_CARD).status_code == 200
-    assert hub.delete("/bookings/1").status_code == 200
-    assert hub.delete("/spaces/2").status_code == 204
+        "name": "Desk", "capacity": 2, "price_cents": 1000}).status_code == 503
+    assert hub.patch("/spaces/2", json={"name": "Desk 2"}).status_code == 503
+    assert hub.post("/spaces/2/bookings", json=window).status_code == 503
+    assert hub.post("/bookings/1/pay", json=VALID_CARD).status_code == 503
+    assert hub.delete("/bookings/1").status_code == 503
+    assert hub.delete("/spaces/2").status_code == 503
     assert writes == []
 
 

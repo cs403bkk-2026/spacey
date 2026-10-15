@@ -381,28 +381,3 @@ def test_503_without_secrets(stub, monkeypatch):
         503, {"error": "purchase unavailable"})
     assert any("POST /register: 500" in line for line in logged)
     assert not any("hunter22-secret" in line or TOKEN in line for line in logged)
-
-
-FREEZE = """
-CREATE FUNCTION frozen_for_test() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN RAISE EXCEPTION 'frozen' USING ERRCODE = '25006'; END $$;
-CREATE TRIGGER frozen_for_test BEFORE INSERT ON bookings
-FOR EACH ROW EXECUTE FUNCTION frozen_for_test();
-"""
-
-
-def test_frozen_table_503(monkeypatch):
-    monkeypatch.delenv("PURCHASE_URL", raising=False)
-    app = create_app(reset_on_start=True)
-    with app.db.cursor() as cur:
-        cur.execute(FREEZE)
-    try:
-        response = app.test_client().post("/spaces/1/bookings", json={
-            "start_time": "2030-01-01T10:00:00Z", "end_time": "2030-01-01T11:00:00Z"})
-    finally:
-        with app.db.cursor() as cur:
-            cur.execute("DROP TRIGGER frozen_for_test ON bookings")
-            cur.execute("DROP FUNCTION frozen_for_test()")
-
-    assert (response.status_code, response.get_json()) == (
-        503, {"error": "purchase unavailable"})
