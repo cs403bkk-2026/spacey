@@ -151,8 +151,9 @@ def pay(monkeypatch, booking=UNPAID, payable=(PENDING,), paid_row=PAID,
         calls["check_payable"] += 1
         return next(answers)
 
-    def authorize_card(*args):
-        calls["charge"] += 1  # returns None: the card is accepted
+    def collect(*args):
+        calls["charge"] += 1
+        return {"status": "paid", "payment_id": 1, "error": None}
 
     def mark_paid(cur, booking_id, card_last4):
         calls["mark_paid"] += 1
@@ -170,7 +171,7 @@ def pay(monkeypatch, booking=UNPAID, payable=(PENDING,), paid_row=PAID,
         monkeypatch.setattr(purchase.booking.client, "pays", lambda: False)
     monkeypatch.setattr(purchase.booking, "get_booking", lambda cur, i: booking)
     monkeypatch.setattr(purchase.booking, "check_payable", check_payable)
-    monkeypatch.setattr(purchase.booking, "authorize_card", authorize_card)
+    monkeypatch.setattr(purchase.booking, "collect", collect)
     monkeypatch.setattr(purchase.booking, "mark_paid", mark_paid)
     monkeypatch.setattr(purchase.booking, "refund_payment", refund_payment)
     answer = purchase.booking.mark_booking_paid(

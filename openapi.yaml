@@ -357,9 +357,11 @@ paths:
         (no card required for that retry), so a retried request can't
         charge twice. Pass `force_failure: true` with a still-valid card
         to make this attempt fail on purpose, for testing the failure
-        path - the booking is left unpaid. With the Purchase service
-        (`PURCHASE_URL` set), the booking's 15-minute hold (SP-R07) is
-        checked before the card: once it has expired, the answer is 409 and
+        path - the booking is left unpaid. Every attempt that reaches the
+        (mocked) provider is recorded in the payments table (PT-009), and a
+        booking is charged at most once, even by concurrent requests.
+        With the Purchase service (`PURCHASE_URL` set), the booking's
+        15-minute hold (SP-R07) is checked before the card: once it has expired, the answer is 409 and
         the card is not charged (ADR 0003). With the switch row's `pays`
         true (PUR-027), the Purchase service checks the hold and charges
         the card through the Payments service; the answers stay the same,
@@ -405,7 +407,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "402":
-          description: Payment failed (only when `force_failure` was set).
+          description: >
+            Payment failed (only when `force_failure` was set). The attempt
+            is recorded as failed; paying again is a new attempt.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -439,6 +443,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: payment unavailable }
+        "504":
+          description: >
+            The payment's outcome is unknown: the provider gave no answer,
+            or another request is still paying this booking. Not a failure -
+            the card may have been charged. The booking stays unpaid and
+            cannot be unlocked, and paying again charges nothing until the
+            outcome is known.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: payment outcome unknown }
 
   /bookings/{bookingId}/unlock:
     post:

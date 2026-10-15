@@ -5,7 +5,7 @@ from datetime import timezone
 from psycopg import Error as DatabaseError
 
 from shared.logger import logger
-from payment.services import authorize_card
+from payment.services import collect
 from payment.services import refund_payment
 from purchase import client, mirror
 
@@ -78,11 +78,13 @@ def mark_paid(cur, booking_id, card_last4) -> dict | None:
 
 
 def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=False):
-    """Pay for a booking. Payment decides whether the card is accepted
-    (payment.services.authorize_card); this owns the booking's paid state.
-    Paying an already-paid booking is a no-op rather than an error, so a
-    retried request can't break the flow or charge twice - and doesn't need
-    a card either. Only the card's last 4 digits are ever stored.
+    """Pay for a booking. Payments collects the booking's stored price and
+    returns an outcome (payment.services.collect, ADR 0004); this acts on it
+    and owns the booking's paid state. Paying an already-paid booking is a
+    no-op rather than an error, so a retried request can't break the flow or
+    charge twice - and doesn't need a card either. Only the card's last 4
+    digits are ever stored. An unknown outcome (504) is not a failure: the
+    booking stays unpaid, and paying again charges nothing until it settles.
     Returns (payload, status) - the raw booking row, or an {"error": ...}."""
     if client.pays():  # PUR-027: the service charges through Payments
         payload, status = client.mark_booking_paid(
@@ -112,11 +114,17 @@ def mark_booking_paid(cur, booking_id, card_number, expiry, cvc, force_failure=F
                 logger.warning("payment booking_id=%s outcome=%s", booking_id, outcome)
                 return facts, status
 
-        rejected = authorize_card(card_number, expiry, cvc, force_failure)
-        if rejected:
-            outcome = "invalid_card" if rejected[1] == 400 else "failed"
+        result = collect(cur.connection, booking_id, row["amount_cents"],
+                         card_number, expiry, cvc, force_failure)
+        if result["status"] == "failed":
+            # No payment_id: the card details were rejected before any attempt.
+            invalid = result["payment_id"] is None
+            outcome = "invalid_card" if invalid else "failed"
             logger.warning("payment booking_id=%s outcome=%s", booking_id, outcome)
-            return rejected
+            return {"error": result["error"]}, 400 if invalid else 402
+        if result["status"] == "unknown":
+            logger.warning("payment booking_id=%s outcome=unknown", booking_id)
+            return {"error": "payment outcome unknown"}, 504
 
         booking = row  # mark_paid replaces row; the refund needs the amount
         row = mark_paid(cur, booking_id, card_number[-4:])

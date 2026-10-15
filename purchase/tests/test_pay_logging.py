@@ -6,6 +6,7 @@ import logging
 import os
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from psycopg import OperationalError
@@ -14,6 +15,15 @@ from purchase import booking
 from shared.logger import logger
 
 PAYABLE = ({"id": 7, "status": "pending"}, 200)
+CURSOR = SimpleNamespace(connection=None)
+# What payment.services.collect returns for each outcome (ADR 0004).
+COLLECTED = {
+    "invalid_card": {"status": "failed", "payment_id": None,
+                     "error": "card_number must be 13-19 digits"},
+    "failed": {"status": "failed", "payment_id": 1, "error": "payment failed"},
+    "unknown": {"status": "unknown", "payment_id": 1, "error": None},
+    "succeeded": {"status": "paid", "payment_id": 1, "error": None},
+}
 
 
 class PayLoggingTest(unittest.TestCase):
@@ -32,7 +42,7 @@ class PayLoggingTest(unittest.TestCase):
         card = dict(card_number="4111111111111111", expiry="12/99", cvc="987")
         for outcome, status in (("not_found", 404), ("already_paid", 200),
                                 ("invalid_card", 400), ("failed", 402),
-                                ("succeeded", 200)):
+                                ("unknown", 504), ("succeeded", 200)):
             with self.subTest(outcome=outcome):
                 found = (None if outcome == "not_found" else
                          {**row, "paid": outcome == "already_paid"})
@@ -42,11 +52,13 @@ class PayLoggingTest(unittest.TestCase):
                     body["card_number"] = "sensitive-invalid-card"
                 with (
                     patch.object(booking, "get_booking", return_value=found),
+                    patch.object(booking, "collect",
+                                 return_value=COLLECTED.get(outcome)),
                     patch.object(booking, "mark_paid", return_value=paid),
                     self.assertLogs(logger, level="DEBUG") as logs,
                 ):
                     _, actual_status = booking.mark_booking_paid(
-                        None, 7, body["card_number"], body["expiry"],
+                        CURSOR, 7, body["card_number"], body["expiry"],
                         body["cvc"], body["force_failure"])
                 self.assertEqual(actual_status, status)
                 self.assertEqual(len(logs.records), 2)
@@ -71,10 +83,11 @@ class PayLoggingTest(unittest.TestCase):
                         else {"return_value": unpaid})
                 with (
                     patch.object(booking, "get_booking", **read),
+                    patch.object(booking, "collect", return_value=COLLECTED["succeeded"]),
                     patch.object(booking, "mark_paid", side_effect=error),
                     self.assertLogs(logger, level="DEBUG") as logs,
                 ):
-                    payload, status = booking.mark_booking_paid(None, 7, **card)
+                    payload, status = booking.mark_booking_paid(CURSOR, 7, **card)
                 self.assertEqual((payload, status), ({"error": "payment unavailable"}, 500))
                 self.assertEqual(logs.records[-1].levelno, logging.ERROR)
                 self.assertEqual(logs.records[-1].getMessage(),

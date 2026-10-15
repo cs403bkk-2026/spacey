@@ -107,7 +107,7 @@ Direct pushes to `main` are blocked. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Payment (`payment/`)
 
-#### Agreed architecture with Purchase (target, not built yet)
+#### Agreed architecture with Purchase
 
 Payments only handles payments: it validates mock card details, processes and records mock
 payments, and returns a success, failed or unknown outcome to Purchase. It does not read or
@@ -126,19 +126,28 @@ update bookings. Purchase owns booking prices, booking updates and requests to A
   access code from Access. After a failed or unknown outcome it keeps the booking unpaid and
   grants no access.
 
-#### Current implementation (differs from the agreement)
+#### Current implementation
 
-- **Data:** the pay flow writes `paid` and `card_last4` on `bookings`. Nothing is recorded in
-  `payments` yet (only tests call `insert_payment`), so paid status lives only on the booking.
+- **Data:** every attempt that reaches the mocked provider is a row in `payments` (PT-009). It
+  starts as `unknown` (in progress) and ends as `success` or `failed`. A unique index
+  (migration `003_one_open_payment_per_booking.sql`) allows at most one `unknown` or `success`
+  row per booking. Refunds are rows too (`refunded`).
 - **Rules:** the card needs 13-19 digits, a valid Luhn checksum, a 3-4 digit CVC and an
-  unexpired `MM/YY` expiry. Only the last 4 digits are stored. Paying a booking that's already
-  paid returns it unchanged. `force_failure: true` returns 402. The provider is mocked. There
-  is no unknown outcome yet.
-- **Dependencies:** Payment reads and updates the `bookings` table owned by Purchase
-  (`repository.get_booking`, `repository.mark_paid`), even though the migration says "Payment
-  never touches Bookings". `access.py` (`/unlock`) and `/metrics` rely on `bookings.paid`.
-- **Gap to close:** move the booking update out of Payment into Purchase, record every
-  attempt in `payments`, and return the agreed outcome instead of the booking.
+  unexpired `MM/YY` expiry; invalid details are refused before any attempt and leave no row.
+  Only the last 4 digits are stored. A booking is charged at most once, even by concurrent
+  requests: the second request meets the first one's row and is answered from it. A decline
+  is stored as `failed`, and paying again is a new attempt. A provider that gives no answer
+  leaves the row `unknown`; that is never treated as a failure, and nothing is charged again
+  while it stays unknown. A free booking (0 cents) stores nothing. The provider is mocked.
+- **Interface:** `payment.services.collect(db, booking_id, amount_cents, card_number, expiry,
+  cvc)` returns `{status: paid|failed|unknown, payment_id, error}`, and `payment_status(db,
+  booking_id)` returns `{status: paid|unknown|failed|none, payment_id}`. Purchase
+  (`purchase.booking.mark_booking_paid`) calls only `collect`, then updates its own booking:
+  200 on `paid`, 400 or 402 on `failed`, 504 on `unknown` (booking left unpaid).
+- **Dependencies:** none on `bookings`; Payments never reads or updates them. Access
+  (`/unlock`) and `/metrics` rely on Purchase's `bookings.paid`.
+- **Still open:** settling an `unknown` attempt needs a provider status check, which the mock
+  doesn't have, so such a booking stays unpaid until that exists.
 
 ## API reference
 
