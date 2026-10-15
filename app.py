@@ -6,7 +6,7 @@ import psycopg
 from flask import Flask, jsonify, redirect, request, session
 from psycopg.rows import dict_row
 
-from access import issue_access_code
+from access import issue_access_code, revoke_on_cancel
 import access.client
 from access.migrations import run_migrations as run_access_migrations
 from payment.migrations import run_migrations
@@ -310,6 +310,8 @@ def create_app(
         if row is None:
             return jsonify(error="booking not found"), 404
 
+        revoke_on_cancel(booking_id)  # the code stops working; never changes this answer
+
         if row["paid"] and row["amount_cents"] > 0:
             refund_payment(
                 app.db,
@@ -327,10 +329,12 @@ def create_app(
         # issues the code (ACC-10).
         with app.db.cursor() as cur:
             refusal = purchase.booking.check_unlockable(cur, booking_id)
+            # Purchase's facts for Access (its times); Access never reads bookings.
+            booking = None if refusal else purchase.booking.get_booking(cur, booking_id)
         if refusal is not None:
             payload, status = refusal
             return jsonify(payload), status
-        payload, status = issue_access_code(booking_id)
+        payload, status = issue_access_code(booking_id, booking)
         return jsonify(payload), status
 
     @app.post("/members/<name>/subscribe")
