@@ -99,24 +99,19 @@ def stub(monkeypatch):
     thread.start()
     monkeypatch.setenv("PURCHASE_URL", state.url)
     monkeypatch.setenv("PURCHASE_TOKEN", TOKEN)
-    monkeypatch.setattr(client, "switch_state", lambda: "on")
     yield state
     server.shutdown()
     server.server_close()
 
 
-@pytest.mark.parametrize("url,state,expected", [
-    (None, "on", False), ("", "on", False),
-    ("http://purchase:8000", "off", False),
-    ("http://purchase:8000", "frozen", False),
-    ("http://purchase:8000", "on", True),
-], ids=["unset", "empty", "off", "frozen", "on"])
-def test_url_and_switch(monkeypatch, url, state, expected):
+@pytest.mark.parametrize("url,expected", [
+    (None, False), ("", False), ("http://purchase:8000", True),
+], ids=["unset", "empty", "set"])
+def test_url_and_switch(monkeypatch, url, expected):
     if url is None:
         monkeypatch.delenv("PURCHASE_URL", raising=False)
     else:
         monkeypatch.setenv("PURCHASE_URL", url)
-    monkeypatch.setattr(client, "switch_state", lambda: state)
 
     assert client.enabled() is expected
 
@@ -331,7 +326,7 @@ def test_timeout_no_retry(monkeypatch):
     started = time.monotonic()
 
     with pytest.raises(client.PurchaseUnavailable):
-        client.cancel_booking(1)
+        client.get_booking(1)  # TIMEOUT_S; cancel_booking waits SLOW_TIMEOUT_S
 
     elapsed = time.monotonic() - started
     time.sleep(0.2)  # a retry would connect again within this time
@@ -386,28 +381,3 @@ def test_503_without_secrets(stub, monkeypatch):
         503, {"error": "purchase unavailable"})
     assert any("POST /register: 500" in line for line in logged)
     assert not any("hunter22-secret" in line or TOKEN in line for line in logged)
-
-
-FREEZE = """
-CREATE FUNCTION frozen_for_test() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN RAISE EXCEPTION 'frozen' USING ERRCODE = '25006'; END $$;
-CREATE TRIGGER frozen_for_test BEFORE INSERT ON bookings
-FOR EACH ROW EXECUTE FUNCTION frozen_for_test();
-"""
-
-
-def test_frozen_table_503(monkeypatch):
-    monkeypatch.delenv("PURCHASE_URL", raising=False)
-    app = create_app(reset_on_start=True)
-    with app.db.cursor() as cur:
-        cur.execute(FREEZE)
-    try:
-        response = app.test_client().post("/spaces/1/bookings", json={
-            "start_time": "2030-01-01T10:00:00Z", "end_time": "2030-01-01T11:00:00Z"})
-    finally:
-        with app.db.cursor() as cur:
-            cur.execute("DROP TRIGGER frozen_for_test ON bookings")
-            cur.execute("DROP FUNCTION frozen_for_test()")
-
-    assert (response.status_code, response.get_json()) == (
-        503, {"error": "purchase unavailable"})

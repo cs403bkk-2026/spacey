@@ -1,4 +1,5 @@
-"""PT-010: controlled service-level race test, without a real database."""
+"""PT-010: controlled service-level race test, without a real database or
+the Purchase service: the functions /pay calls are patched."""
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ def test_same_booking_reaches_mark_paid_once(monkeypatch, concurrent):
     lock = Lock()
     both_read = Barrier(2)
     writes = []
+    charges = []
 
     def get_booking(db, booking_id):
         assert booking_id == 1
@@ -53,7 +55,19 @@ def test_same_booking_reaches_mark_paid_once(monkeypatch, concurrent):
             booking.update(paid=True, card_last4=last4)
             return booking.copy()
 
+    def authorize_card(*args):
+        with lock:
+            charges.append(args)  # returns None: the card is accepted
+
+    monkeypatch.setenv("PURCHASE_URL", "http://purchase.test")
+    monkeypatch.setattr(booking_module.client, "pays", lambda: False)  # PUR-027's flag off
     monkeypatch.setattr(booking_module, "get_booking", get_booking)
+    monkeypatch.setattr(
+        booking_module,
+        "check_payable",
+        lambda db, booking_id: ({"id": 1, "status": "pending"}, 200),
+    )
+    monkeypatch.setattr(booking_module, "authorize_card", authorize_card)
     monkeypatch.setattr(booking_module, "mark_paid", mark_paid)
 
     card = {
@@ -78,3 +92,4 @@ def test_same_booking_reaches_mark_paid_once(monkeypatch, concurrent):
     assert results[0] == results[1]
     assert booking["paid"] is True
     assert len(writes) == 1, f"mark_paid was called {len(writes)} times"
+    assert len(charges) == 1, f"the card was charged {len(charges)} times"

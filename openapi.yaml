@@ -360,7 +360,10 @@ paths:
         path - the booking is left unpaid. With the Purchase service
         (`PURCHASE_URL` set), the booking's 15-minute hold (SP-R07) is
         checked before the card: once it has expired, the answer is 409 and
-        the card is not charged (ADR 0003).
+        the card is not charged (ADR 0003). With the switch row's `pays`
+        true (PUR-027), the Purchase service checks the hold and charges
+        the card through the Payments service; the answers stay the same,
+        plus 503.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       requestBody:
@@ -421,6 +424,17 @@ paths:
               example: { error: booking hold has expired }
         "500":
           description: Database failure during payment; check booking status before retrying.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: payment unavailable }
+        "503":
+          description: >
+            Only with the switch row's `pays` true (PUR-027). `payment
+            unavailable`: the Payments service gave no usable answer; the
+            booking stays unpaid and paying again is safe (it is never
+            charged twice). `purchase unavailable`: the Purchase service
+            did not answer.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

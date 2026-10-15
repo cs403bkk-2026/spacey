@@ -126,6 +126,12 @@ def create_tables(cur) -> None:
         )
         """
     )
+    # PUR-027: true sends /pay to the service (client.pays); false, the
+    # default, runs /pay here. Set with the same logins as state.
+    cur.execute(
+        "ALTER TABLE purchase_switch "
+        "ADD COLUMN IF NOT EXISTS pays BOOLEAN NOT NULL DEFAULT false"
+    )
     cur.execute("INSERT INTO purchase_switch DEFAULT VALUES ON CONFLICT DO NOTHING")
     cur.execute(
         """
@@ -171,3 +177,14 @@ def create_tables(cur) -> None:
         END $$
         """
     )
+
+
+def seed_starter_space(cur) -> None:
+    """Give an empty database one space, so there is something to book."""
+    cur.execute("SELECT COUNT(*) AS count FROM spaces")
+    if cur.fetchone()["count"] == 0:
+        cur.execute(
+            "INSERT INTO spaces (name, capacity, price_cents) "
+            "VALUES (%s, %s, %s)",
+            ("Founders Desk", 1, 2500),  # $25.00 per hour
+        )
