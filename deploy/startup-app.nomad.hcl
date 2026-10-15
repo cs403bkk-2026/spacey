@@ -55,7 +55,11 @@ job "spacey" {
         # public IP, which refuses container traffic. Resolve it to the
         # proxy's private address (node cs403bkk-nomad-1), which serves it
         # with the same certificate and is reachable from every node.
-        extra_hosts = ["purchase.cs403bkk26.space:192.168.171.100"]
+        # Access (ACCESS_URL) sits behind the same proxy, so it needs the same.
+        extra_hosts = [
+          "purchase.cs403bkk26.space:192.168.171.100",
+          "access.cs403bkk26.space:192.168.171.100",
+        ]
       }
 
       env {
@@ -67,6 +71,8 @@ job "spacey" {
 DATABASE_URL={{ with nomadVar "nomad/jobs/spacey" }}{{ .database_url }}{{ end }}
 PURCHASE_URL={{ with nomadVar "nomad/jobs/spacey" }}{{ with .purchase_url }}{{ . }}{{ end }}{{ end }}
 PURCHASE_TOKEN={{ with nomadVar "nomad/jobs/spacey" }}{{ with .purchase_token }}{{ . }}{{ end }}{{ end }}
+ACCESS_URL={{ with nomadVar "nomad/jobs/spacey" }}{{ if and .access_url.Value .access_token.Value }}{{ .access_url.Value }}{{ end }}{{ end }}
+SERVICE_TOKEN={{ with nomadVar "nomad/jobs/spacey" }}{{ with .access_token }}{{ . }}{{ end }}{{ end }}
 EOH
         destination = "secrets/runtime.env"
         env         = true
